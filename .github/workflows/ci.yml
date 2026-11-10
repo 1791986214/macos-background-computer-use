@@ -9,7 +9,11 @@ on:
 jobs:
   build-and-unit-test:
     # 必须 macOS runner：源码依赖 AppKit / ScreenCaptureKit / ApplicationServices
-    runs-on: macos-14
+    #
+    # 用 macos-latest 而不是固定小版本：固定标签会随镜像退役而「无人接单」，
+    # 表现为 job 在 1 秒内被 cancel、runner_name 为空、steps 为空 —— 那不是在报错，
+    # 是根本没有机器跑。遇到过就把标签升到当时仍受支持的版本。
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 

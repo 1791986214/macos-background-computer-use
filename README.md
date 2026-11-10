@@ -156,5 +156,8 @@ CI（`.github/workflows/ci.yml`）在 macOS runner 上只跑单元测试 —— 
 
 ## 许可证
 
-内部项目，**未附加开源许可证**。在获得明确授权并完成第三方代码/许可证审查之前，
-不要将本仓库改为 Public，也不要复制到其他项目。
+[MIT](LICENSE)。
+
+本仓库不含第三方代码，无外部依赖（MCP 服务器为手写零依赖脚本）。
+唯一涉及的外部技术依赖是 Apple 系统 API 与一个未文档化符号
+`_AXUIElementGetWindow`（见 [`SECURITY.md`](SECURITY.md)），该符号不属于可再分发代码。

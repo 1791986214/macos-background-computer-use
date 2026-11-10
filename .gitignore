@@ -1,0 +1,36 @@
+# 构建产物
+bin/
+build/
+*.o
+*.dSYM/
+.swiftpm/
+
+# fixture 与测试产物
+tests/integration/build/
+*.png
+*.jpg
+*.mp4
+*.mov
+!docs/images/*.png
+
+# 运行时状态（会话里有 pid / 窗口号，换机器即失效，不该进版本库）
+.wbcu/
+sessions/
+allowlist.json
+
+# 本地环境
+.DS_Store
+*.log
+.env
+.env.*
+*.key
+*.pem
+*.p12
+*.cer
+credentials*
+secrets*
+
+# IDE
+.idea/
+.vscode/
+*.xcodeproj/xcuserdata/

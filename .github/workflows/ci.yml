@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-unit-test:
+    # 必须 macOS runner：源码依赖 AppKit / ScreenCaptureKit / ApplicationServices
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          sw_vers
+          uname -m
+          xcode-select -p
+          swift --version || true
+          xcrun --show-sdk-path
+
+      - name: 构建
+        run: ./scripts/build.sh
+
+      - name: 版本与帮助可用
+        run: |
+          ./bin/wbcu version
+          ./bin/wbcu --help > /dev/null
+
+      - name: 单元测试（纯逻辑，无需 TCC 授权）
+        run: ./tests/run-all.sh unit
+
+      - name: 自检报告（JSON）
+        if: always()
+        run: ./bin/wbcu selftest --json > selftest.json || true
+
+      - name: 源码卫生（个人路径 / 密钥 / 私有 API）
+        run: |
+          set -e
+          if grep -rEn "/Users/[a-z]+/" src mcp 2>/dev/null | grep -v example; then
+            echo "::error::源码含个人绝对路径"; exit 1
+          fi
+          if grep -rEn "SLPS[A-Za-z]+|SLS[A-Za-z]+" src 2>/dev/null; then
+            echo "::error::使用了 SkyLight 私有 API"; exit 1
+          fi
+          echo "OK"
+
+      - name: 上传产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wbcu-binary
+          path: |
+            bin/wbcu
+            selftest.json
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # 真实 Computer Use 集成测试 **不在本 workflow 里跑**。
+  #
+  # 原因：这类测试需要
+  #   1) 一个有图形会话的 macOS 机器（runner 是无头/无登录会话）
+  #   2) 用户在系统设置里手动授予 辅助功能 + 屏幕录制
+  #   3) 期间没有其他人操作鼠标（否则「零位移」断言不可靠）
+  #
+  # 这三条在托管 runner 上都不成立。把它塞进 CI 只会得到两种结果：
+  # 永远 skip（假绿），或者永远 fail（噪音）。
+  #
+  # 正确做法：在授权过的自托管机器上手动/定时跑
+  #   ./tests/run-all.sh all
+  # 结论：**CI 绿 ≠ 功能可用**，请勿据此宣称能力已验证。
+  # ---------------------------------------------------------------------------
+  integration-note:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 说明
+        run: |
+          echo "集成测试需要真实桌面会话与 TCC 授权，请在授权机器上运行："
+          echo "  ./tests/run-all.sh all"

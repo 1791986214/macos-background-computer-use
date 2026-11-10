@@ -60,7 +60,7 @@ MCP **不会自动生效**：需要在 WorkBuddy 连接器管理页右上角「�
 
 ```bash
 mkdir -p ~/.workbuddy/skills
-cp -R skills/macos-background-computer-use ~/.workbuddy/skills/
+cp -R skills/workbuddy-third-hand ~/.workbuddy/skills/
 ```
 
 技能放在用户级目录（`~/.workbuddy/skills/`）才对**所有项目**可见；
@@ -95,7 +95,7 @@ rm -f ~/.local/bin/wbcu ~/.local/bin/wbcu-mcp
 rm -rf ~/.local/share/wbcu
 rm -rf ~/.wbcu                       # 含授权白名单，删了就全没了
 # 技能
-rm -rf ~/.workbuddy/skills/macos-background-computer-use
+rm -rf ~/.workbuddy/skills/workbuddy-third-hand
 # MCP 配置：手动从 ~/.workbuddy/mcp.json 删掉 "wbcu" 段
 ```
 
@@ -105,7 +105,7 @@ TCC 授权需要单独撤销（`tccutil reset ...`），见 `permissions.md`。
 
 1. 装 Command Line Tools
 2. 克隆仓库 → `./scripts/build.sh && ./scripts/install.sh`
-3. `cp -R skills/macos-background-computer-use ~/.workbuddy/skills/`
+3. `cp -R skills/workbuddy-third-hand ~/.workbuddy/skills/`
 4. 恢复 MCP 配置段（或重新加一遍）
 5. `wbcu perm --prompt` → 系统设置里勾选 → 重启终端
 6. `wbcu guard --app <bundleId> --allow` 逐个恢复白名单

@@ -49,9 +49,16 @@ echo "   $SHARE/wbcu-mcp.mjs"
 
 if [ "$WITH_SKILL" = "1" ]; then
   mkdir -p "$HOME/.workbuddy/skills"
-  rm -rf "$HOME/.workbuddy/skills/macos-background-computer-use"
-  cp -R "$REPO/skills/macos-background-computer-use" "$HOME/.workbuddy/skills/"
-  echo "✅ 技能已装：$HOME/.workbuddy/skills/macos-background-computer-use"
+  # 迁移：清掉旧名字的技能目录，避免同一个引擎被两个技能描述、触发时打架
+  for legacy in macos-background-computer-use; do
+    if [ -d "$HOME/.workbuddy/skills/$legacy" ]; then
+      rm -rf "$HOME/.workbuddy/skills/$legacy"
+      echo "   已移除旧技能：$legacy（已改名 workbuddy-third-hand）"
+    fi
+  done
+  rm -rf "$HOME/.workbuddy/skills/workbuddy-third-hand"
+  cp -R "$REPO/skills/workbuddy-third-hand" "$HOME/.workbuddy/skills/"
+  echo "✅ 技能已装：$HOME/.workbuddy/skills/workbuddy-third-hand"
 fi
 
 if [ "$WITH_MCP" = "1" ]; then

@@ -1,12 +1,12 @@
 ---
-name: macos-background-computer-use
-description: 在获得用户授权的前提下，用 macOS 原生技术对指定应用做窗口捕获、UI 识别、后台点击/输入与虚拟鼠标可视化，优先不抢占用户的真实鼠标和键盘焦点。当用户要求「帮我操作另一个 Mac 应用」「在后台完成桌面任务」「不要影响我正在用的鼠标」「读一下另一个应用里的信息」「点一下那个按钮」「同时在两个应用里干活」「用虚拟鼠标操作某个窗口」，或需要在 Finder / 计算器 / 文本编辑 / Safari / Electron 应用里做自动化时使用。
+name: workbuddy-third-hand
+description: WorkBuddy Third Hand —— 给 WorkBuddy 的第三只手。用 macOS 原生技术（ScreenCaptureKit + Accessibility + 进程级事件投递 + 独立虚拟光标）在后台操作指定应用，优先不抢占用户真实鼠标、不切换前台、不抢键盘焦点，并且每次操作都读值验证。当用户要求「帮我操作另一个 Mac 应用」「在后台完成桌面任务」「不要影响我正在用的鼠标」「读一下另一个应用里的信息」「点一下那个按钮」「同时在两个应用里干活」「用虚拟鼠标操作某个窗口」，或需要在 Finder / 计算器 / 文本编辑 / Safari / Electron 应用里做自动化时使用。
 agent_created: true
 ---
 
-# macOS Background Computer Use
+# WorkBuddy Third Hand
 
-让 WorkBuddy 能操作**别的** macOS 应用，而用户可以继续用鼠标和键盘。
+给 WorkBuddy 的第三只手：让它在后台操作**别的** macOS 应用，而用户可以继续用鼠标和键盘。
 
 核心承诺（也是验收标准）：**真实鼠标零位移、前台应用不切换、键盘焦点不被抢**，
 同时目标应用里的 UI 真的发生了变化 —— 而且这个变化是被**读值验证**过的，不是「命令返回 0 就算成功」。

@@ -613,6 +613,8 @@ func cmdCapabilities(_ args: Args) {
     gJSONMode = args.flag("json")
     let p = currentPermissions()
     var caps: [String: Any] = [
+        "product": "WorkBuddy Third Hand",
+        "component": "native engine (wbcu)",
         "version": VERSION,
         "macOS": ProcessInfo.processInfo.operatingSystemVersionString,
         "permissions": ["accessibility": p.accessibility, "screenRecording": p.screenRecording,
@@ -640,7 +642,7 @@ func cmdCapabilities(_ args: Args) {
     ]
     caps["ghostDaemon"] = ghostDaemonAlive()
     if gJSONMode { emit(caps) } else {
-        emitText("wbcu \(VERSION)  \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        emitText("WorkBuddy Third Hand — 引擎 wbcu \(VERSION)  \(ProcessInfo.processInfo.operatingSystemVersionString)")
         emitText("AX=\(p.accessibility ? "✅" : "❌")  屏幕录制=\(p.screenRecording ? "✅" : "❌")  输入注入=\(p.postEvent ? "✅" : "❌")")
         emitText("后台点击=\(p.accessibility ? "可用" : "不可用")  窗口捕获=\(p.screenRecording ? "可用" : "不可用")")
     }

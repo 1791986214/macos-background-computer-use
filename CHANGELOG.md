@@ -5,12 +5,40 @@
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-10
+
+产品身份从通用的「macOS Background Computer Use」定为 **WorkBuddy Third Hand**
+（WorkBuddy 的第三只手）。不破坏已有调用接口与 Git 历史。
+
+### 变更
+- **产品定位**：README 全面重写——明确「WorkBuddy 负责思考和决策，Third Hand 负责观察、执行和验证」，
+  强调 Third Hand 是 WorkBuddy 的技能与执行引擎，**不是独立 AI Agent**
+- **技能改名**：`skills/macos-background-computer-use/` → `skills/workbuddy-third-hand/`，
+  `SKILL.md` 的 `name` 同步为 `workbuddy-third-hand`；`install.sh --skill` 会自动移除旧名字目录，避免两个技能描述同一引擎
+- **引擎标识**：`wbcu capabilities` 新增 `product` / `component` 字段（只增不改，向后兼容）
+- 版本号 0.2.0 → 0.3.0（产品身份与技能 id 变更属公开接口变化）
+
+### 保持不动（避免破坏调用方）
+- 仓库 slug 仍为 `macos-background-computer-use`（旧链接、克隆、脚本引用不受影响）
+- 二进制名仍为 `wbcu`，命令行参数、MCP 工具名 `cu_*` 全部不变
+- ScreenCaptureKit 捕获、Input Dispatcher 投递、Ghost Cursor 一行未改
+
+### 新增
+- `docs/images/demo.gif`：**实际运行录屏**合成的演示（`scripts/record-demo.sh` 抓帧 +
+  `scripts/make-demo-gif.py` 合成），字幕条显示同一次运行的真实鼠标坐标与验证结果
+- `scripts/record-demo.sh` / `scripts/make-demo-gif.py`：录屏与合成脚本，可复现
+- README 补充 Skill 安装路径、MCP 配置片段、`cu_session` 调用示例
+
+### 修正
+- README 旧版遗留的事实错误：占位用户名、许可证「待定」（实为 MIT）、
+  Roadmap 全部未勾选（实际 Phase 1 已全部完成）
+- Roadmap 按真实测试结果逐项勾选，未验证的一律留空
+
 ### 文档
-- README 重写：补齐真实克隆地址、可执行的安装/首次验证命令、实测兼容性表格与分层测试说明；
-  修正「许可证待定」为 MIT、修正光标实现描述（NSView + Timer，非 Core Animation）；
-  Roadmap 按实际完成情况勾选，架构图改为反映「捕获不喂输入、光标独立进程、验证独立成环」的真实分层
-- 技能补齐 `examples/quickstart.md`（六步最小流程 + 错误码对照 + idle 判据），
-  修复安装后 `examples/` 为空目录的问题（git 不跟踪空目录）
+- README 重写：补齐真实克隆地址、可复制执行的安装/首次验证命令、实测兼容性表格与分层测试说明；
+  修正光标实现描述（NSView + Timer，非 Core Animation）；架构图改为反映真实分层
+- 技能补齐 `examples/quickstart.md`（六步最小流程 + 错误码对照 + idle 判据）
+
 
 ## [0.2.0] — 2026-11-10
 

@@ -36,7 +36,7 @@ scope: capture | ax | dispatch | ghost | session | ci | docs
 3. 有 GUI 环境的话再跑 `./tests/run-all.sh`，把输出贴进 PR
 4. 更新 `CHANGELOG.md` 的 `[Unreleased]` 段
 5. 涉及能力变化时同步 `docs/capability-matrix.md`（没实测就写 `Not Tested`）
-6. 涉及技能行为变化时同步 `skills/macos-background-computer-use/SKILL.md`
+6. 涉及技能行为变化时同步 `skills/workbuddy-third-hand/SKILL.md`
 
 ## 版本
 

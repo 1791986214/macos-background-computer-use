@@ -146,6 +146,8 @@ AX 语义动作  →  进程级定向投递  →  坐标点击  →  全局 HID�
 
 ## 九、参考
 
+- **可直接照抄的最小流程**：`examples/quickstart.md`（同目录下，六步跑通一次后台操作）
+- 命令与退出码速查：`references/api.md`
 - 架构与实测数据：仓库 `docs/architecture.md`、`docs/capability-matrix.md`
 - 权限细节：`docs/permissions.md`
 - 安装与恢复：`docs/installation.md`

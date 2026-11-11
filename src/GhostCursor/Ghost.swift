@@ -15,9 +15,35 @@ import Darwin
 // 三层协同但彼此独立：
 //   AgentCursor(可视化)  ⇄  TargetedDispatcher(真正投递)  ⇄  Observer(AX/SCK 观察)
 // 关掉可视化，投递照常；关掉观察，投递照常（只是无法验证）。
+//
+// ── v0.4.2 的两个关键修正 ───────────────────────────────────
+//
+// ① 窗口尺寸：整屏透明面板 → 126×126 跟随小窗口
+//    旧实现是 `contentRect: screen.frame`，一整块透明面板盖住整个屏幕。
+//    透明不等于无感：它仍然是「用户前台窗口上方的一层全屏窗口」，
+//    任何窗口级合成/录屏/窗口列表都能看到它，而且光标一动，
+//    整屏区域都要重绘 —— 用户看到的就是「虚拟鼠标在我前台窗口飞来飞去」。
+//    Codex 的 Software Cursor 实测是 126×126（layer 102）的小窗口，
+//    只围着自己那一小块走。这里对齐这个尺寸。
+//
+// ② 可见性：只画在「目标窗口真切可见的地方」
+//    窗口小了并不会自动解决遮挡 —— 如果目标窗口被你的前台窗口盖住，
+//    小窗口照样会把光标画到你的窗口上面。所以每帧之前都要问一句：
+//    这个点现在还归目标窗口吗？（TargetWindowVisibilityManager.pointVisible）
+//    不归它 → 直接不画。宁可什么都看不见，也不在你眼前乱飞。
+//
+// ③ 空闲即隐藏：对齐 Codex 的 onscreen=false
+//    动作结束后光标不该长期挂在屏幕上。1.8s 无命令就整窗隐藏。
 // ============================================================
 
 let GHOST_SOCK = "/tmp/wbcu-ghost.sock"
+
+/// 跟随窗口尺寸：对齐 Codex Software Cursor 的实测值（126×126）
+let GHOST_WIN_SIZE: CGFloat = 126
+/// 光标尖端在跟随窗口内的固定位置（视图坐标，左上原点）
+let GHOST_TIP = CGPoint(x: 24, y: 24)
+/// 空闲多久后自动隐藏（秒）
+let GHOST_IDLE_HIDE: Double = 1.8
 
 enum CursorPhase: String {
     case idle, moving, pressing, ok, fail
@@ -29,6 +55,8 @@ final class CursorModel {
     var windowId: CGWindowID? = nil
     var anchorLocal: CGPoint = .zero
     var anchored = false
+    /// 目标进程；可见性判断要用它来区分「本应用其它窗口」和「别人的窗口」
+    var targetPid: pid_t = 0
 
     var target: CGPoint = .zero       // 由锚点换算出的全局目标
     var display: CGPoint = .zero      // 当前动画位置
@@ -36,11 +64,19 @@ final class CursorModel {
     var label: String = ""
     var visible = false
 
+    /// 目标点当前是否归目标窗口（被遮住 / 最小化 / 不在当前 Space → false）
+    var suppressed = false
+    /// 是否在前台（仅用于绘制时的弱化样式，不影响是否显示）
+    var background = false
+
     var feedbackKind: CursorPhase? = nil
     var feedbackAt: Date? = nil
     var moveStartedAt: Date? = nil
     var moveFrom: CGPoint = .zero
     var moveDuration: Double = 0.24
+    var lastTouchAt = Date()
+
+    func touch() { lastTouchAt = Date() }
 
     func windowFrame(_ id: CGWindowID) -> CGRect? {
         guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]],
@@ -72,26 +108,34 @@ final class CursorModel {
             feedbackAt = nil; feedbackKind = nil
             if phase == .ok || phase == .fail { phase = .idle }
         }
+        // 空闲自动隐藏：动作结束后光标不该长期挂在屏幕上
+        if phase == .idle, feedbackAt == nil,
+           Date().timeIntervalSince(lastTouchAt) > GHOST_IDLE_HIDE {
+            hide()
+        }
     }
 
-    func goto(global p: CGPoint, animated: Bool, label text: String) {
+    func goto(global p: CGPoint, animated: Bool, label text: String, pid: pid_t = 0) {
         moveFrom = display; target = p
-        anchored = false; windowId = nil
+        anchored = false; windowId = nil; targetPid = pid
         visible = true
         phase = animated ? .moving : .idle
         moveStartedAt = animated ? Date() : nil
         if !animated { display = p }
         label = text
+        touch()
     }
 
-    func goto(window: CGWindowID, local: CGPoint, animated: Bool, label text: String) {
+    func goto(window: CGWindowID, local: CGPoint, animated: Bool, label text: String, pid: pid_t = 0) {
         anchored = true; windowId = window; anchorLocal = local
+        if pid > 0 { targetPid = pid }
         refreshAnchor()
         moveFrom = display; visible = true
         phase = animated ? .moving : .idle
         moveStartedAt = animated ? Date() : nil
         if !animated { display = target }
         label = text
+        touch()
     }
 
     func press(label text: String) {
@@ -101,6 +145,7 @@ final class CursorModel {
         }
         phase = .pressing
         if !text.isEmpty { label = text }
+        touch()
     }
 
     func feedback(_ ok: Bool, label text: String) {
@@ -108,11 +153,13 @@ final class CursorModel {
         feedbackKind = phase
         feedbackAt = Date()
         if !text.isEmpty { label = text }
+        touch()
     }
 
     func hide() {
         visible = false; phase = .idle
         feedbackKind = nil; feedbackAt = nil
+        moveStartedAt = nil
     }
 
     var snapshot: [String: Any] {
@@ -121,79 +168,94 @@ final class CursorModel {
          "targetX": round(target.x), "targetY": round(target.y),
          "anchored": anchored, "windowId": windowId.map { Int($0) } ?? 0,
          "localX": round(anchorLocal.x), "localY": round(anchorLocal.y),
+         "suppressed": suppressed, "background": background,
          "label": label]
     }
 }
 
 // MARK: - 渲染（矢量绘制，与 Codex 同为代码绘制而非图片资源）
+//
+// 视图是 flipped 的：坐标原点在左上、y 向下，和 CGEvent 的全局坐标一致，
+// 于是「全局点 → 视图点」只需要减去窗口原点，不用翻 y。
 final class GhostView: NSView {
     var model: CursorModel!
-    override var isFlipped: Bool { false }
+    /// 光标尖端在本视图中的位置（每帧由控制器按实际窗口原点算出）
+    var anchor: CGPoint = .zero
 
-    private func toView(_ p: CGPoint) -> CGPoint {
-        let screenH = NSScreen.screens.first?.frame.height ?? 0
-        return CGPoint(x: p.x, y: (screenH - p.y) - (window?.frame.minY ?? 0))
-    }
+    override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let m = model, m.visible else { return }
-        let p = toView(m.display)
+        guard let m = model, m.visible, !m.suppressed else { return }
+        let p = anchor
+        let dim: CGFloat = m.background ? 0.72 : 1.0
 
         if let k = m.feedbackKind, let at = m.feedbackAt {
             let t = CGFloat(min(1.0, Date().timeIntervalSince(at) / 0.9))
-            let radius = 9 + t * 30
+            let radius = 9 + t * 26
             let color: NSColor = k == .ok ? .systemGreen : .systemRed
-            color.withAlphaComponent((1 - t) * 0.75).setStroke()
+            color.withAlphaComponent((1 - t) * 0.75 * dim).setStroke()
             let ring = NSBezierPath(ovalIn: NSRect(x: p.x - radius, y: p.y - radius,
                                                    width: radius * 2, height: radius * 2))
             ring.lineWidth = 2.5
             ring.stroke()
         }
         if m.phase == .pressing {
-            NSColor.systemPurple.withAlphaComponent(0.32).setFill()
+            NSColor.systemPurple.withAlphaComponent(0.32 * dim).setFill()
             NSBezierPath(ovalIn: NSRect(x: p.x - 16, y: p.y - 16, width: 32, height: 32)).fill()
-            NSColor.systemPurple.withAlphaComponent(0.5).setStroke()
+            NSColor.systemPurple.withAlphaComponent(0.5 * dim).setStroke()
             let r2 = NSBezierPath(ovalIn: NSRect(x: p.x - 11, y: p.y - 11, width: 22, height: 22))
             r2.lineWidth = 1.5; r2.stroke()
         }
 
         // 光晕
-        NSColor.systemPurple.withAlphaComponent(0.18).setFill()
+        NSColor.systemPurple.withAlphaComponent(0.18 * dim).setFill()
         NSBezierPath(ovalIn: NSRect(x: p.x - 10, y: p.y - 10, width: 20, height: 20)).fill()
 
-        // 指针
+        // 指针（flipped 视图：y 正方向向下，所以箭头朝下生长）
         let arrow = NSBezierPath()
         arrow.move(to: NSPoint(x: p.x, y: p.y))
-        arrow.line(to: NSPoint(x: p.x, y: p.y - 19))
-        arrow.line(to: NSPoint(x: p.x + 4.6, y: p.y - 14.4))
-        arrow.line(to: NSPoint(x: p.x + 7.4, y: p.y - 19.8))
-        arrow.line(to: NSPoint(x: p.x + 10.4, y: p.y - 18.4))
-        arrow.line(to: NSPoint(x: p.x + 7.6, y: p.y - 13.1))
-        arrow.line(to: NSPoint(x: p.x + 12.8, y: p.y - 12.6))
+        arrow.line(to: NSPoint(x: p.x, y: p.y + 19))
+        arrow.line(to: NSPoint(x: p.x + 4.6, y: p.y + 14.4))
+        arrow.line(to: NSPoint(x: p.x + 7.4, y: p.y + 19.8))
+        arrow.line(to: NSPoint(x: p.x + 10.4, y: p.y + 18.4))
+        arrow.line(to: NSPoint(x: p.x + 7.6, y: p.y + 13.1))
+        arrow.line(to: NSPoint(x: p.x + 12.8, y: p.y + 12.6))
         arrow.close()
-        NSColor.white.withAlphaComponent(0.96).setFill()
+        NSColor.white.withAlphaComponent(0.96 * dim).setFill()
         arrow.fill()
         let stroke: NSColor = m.phase == .fail ? .systemRed : (m.phase == .ok ? .systemGreen : .systemPurple)
-        stroke.setStroke()
+        stroke.withAlphaComponent(dim).setStroke()
         arrow.lineWidth = 1.3
         arrow.lineJoinStyle = .round
         arrow.stroke()
 
         if !m.label.isEmpty {
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 10, weight: .medium),
-                .foregroundColor: NSColor.white
-            ]
-            let s = m.label as NSString
-            let sz = s.size(withAttributes: attrs)
-            let box = NSRect(x: p.x + 13, y: p.y - 16, width: sz.width + 10, height: sz.height + 4)
-            stroke.withAlphaComponent(0.92).setFill()
-            NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
-            s.draw(at: NSPoint(x: box.minX + 5, y: box.minY + 2), withAttributes: attrs)
+            // 标签必须画得进 126×126 的小窗口：超宽就截断，不做无边界扩张
+            let avail = bounds.width - p.x - 14
+            if avail > 24 {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+                    .foregroundColor: NSColor.white.withAlphaComponent(dim)
+                ]
+                var s = m.label as NSString
+                var w = s.size(withAttributes: attrs).width
+                if w > avail - 10 {
+                    while s.length > 1, w > avail - 10 {
+                        s = (s.substring(to: s.length - 1) + "…") as NSString
+                        w = s.size(withAttributes: attrs).width
+                    }
+                }
+                let box = NSRect(x: p.x + 13, y: p.y + 4, width: min(w + 10, avail), height: 16)
+                stroke.withAlphaComponent(0.92 * dim).setFill()
+                NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4).fill()
+                s.draw(in: NSRect(x: box.minX + 5, y: box.minY + 3, width: box.width - 10, height: 12),
+                       withAttributes: attrs)
+            }
         }
     }
 }
 
+/// 不抢焦点、不参与窗口循环、不接鼠标事件的小型跟随面板
 final class GhostPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
@@ -206,10 +268,12 @@ final class CursorController {
     var view: GhostView!
     var animTimer: Timer?
     var anchorTimer: Timer?
+    var visTimer: Timer?
+    private var windowShown = false
+    private var visOut: [String: Any] = [:]
 
     func setup() {
-        guard let screen = NSScreen.screens.first else { return }
-        panel = GhostPanel(contentRect: screen.frame,
+        panel = GhostPanel(contentRect: NSRect(x: 0, y: 0, width: GHOST_WIN_SIZE, height: GHOST_WIN_SIZE),
                            styleMask: [.borderless, .nonactivatingPanel],
                            backing: .buffered, defer: false)
         panel.isOpaque = false
@@ -222,42 +286,99 @@ final class CursorController {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+        panel.animationBehavior = .none
 
-        view = GhostView(frame: screen.frame)
+        view = GhostView(frame: NSRect(x: 0, y: 0, width: GHOST_WIN_SIZE, height: GHOST_WIN_SIZE))
         view.model = model
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = view
-        panel.orderFrontRegardless()
 
         animTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { _ in
             self.model.tick()
-            self.view.needsDisplay = true
-            // 走 CFRunLoopRun() 时不经过 NSApp 的绘制周期，
-            // 只设 needsDisplay 不会真的重绘（实测：窗口在、坐标对、画布全透明）。
-            // 所以每个 tick 主动 flush 一次。
-            self.view.displayIfNeeded()
+            self.present()
         }
         anchorTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             self.model.refreshAnchor()
         }
+        // 可见性复查：目标被遮挡/被切到别的 Space 后，光标必须立刻消失。
+        // 2Hz 足够（人工切窗口的动作远慢于这个频率），且只在光标可见时跑。
+        visTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            guard self.model.visible else { return }
+            self.refreshVisibility()
+        }
+    }
+
+    /// 把光标渲染出来：定位小窗口 → 画 → 必要时隐藏整窗
+    private func present() {
+        guard model.visible, !model.suppressed else {
+            if windowShown { panel.orderOut(nil); windowShown = false }
+            return
+        }
+        positionWindow()
+        view.needsDisplay = true
+        // 走 CFRunLoopRun() 时不经过 NSApp 的绘制周期，
+        // 只设 needsDisplay 不会真的重绘（实测：窗口在、坐标对、画布全透明）。
+        // 所以每个 tick 主动 flush 一次。
+        view.displayIfNeeded()
+        if !windowShown { panel.orderFrontRegardless(); windowShown = true }
+    }
+
+    /// 小窗口跟随光标：窗口原点 = 全局点 − 尖端内偏移，并夹在屏幕内
+    private func positionWindow() {
+        guard let screen = NSScreen.screens.first else { return }
+        let screenH = screen.frame.height
+        let screenW = screen.frame.width
+        var originCG = CGPoint(x: model.display.x - GHOST_TIP.x,
+                               y: model.display.y - GHOST_TIP.y)
+        originCG.x = max(0, min(originCG.x, screenW - GHOST_WIN_SIZE))
+        originCG.y = max(0, min(originCG.y, screenH - GHOST_WIN_SIZE))
+        let appkitOrigin = CGPoint(x: originCG.x, y: screenH - (originCG.y + GHOST_WIN_SIZE))
+        if panel.frame.origin != appkitOrigin {
+            panel.setFrameOrigin(appkitOrigin)
+        }
+        // 尖端位置由「实际窗口原点」反推，夹屏后依然指向真实像素
+        view.anchor = CGPoint(x: model.display.x - originCG.x,
+                              y: model.display.y - originCG.y)
+    }
+
+    /// 目标点还归不归目标窗口？不归就整窗隐藏
+    func refreshVisibility() -> Bool {
+        guard model.anchored, let wid = model.windowId else {
+            model.suppressed = false
+            return true
+        }
+        let frame = model.windowFrame(wid)
+        model.background = (model.targetPid > 0)
+            ? (NSWorkspace.shared.frontmostApplication?.processIdentifier != model.targetPid)
+            : false
+        // 点必须在窗口矩形内，且未被更上层的窗口盖住
+        let inside = frame.map { $0.contains(model.target) } ?? false
+        let visible = inside && TargetWindowVisibilityManager.pointVisible(windowId: wid, point: model.target)
+        model.suppressed = !visible
+        return visible
     }
 
     func handle(_ o: [String: Any]) -> [String: Any] {
         let op = (o["op"] as? String) ?? (o["cmd"] as? String) ?? ""
         let animated = (o["animate"] as? Bool) ?? true
         let label = (o["label"] as? String) ?? ""
+        let pid = pid_t((o["pid"] as? Int) ?? 0)
         switch op {
         case "goto":
             if let wid = o["windowId"] as? Int, wid > 0,
                let lx = o["localX"] as? Double, let ly = o["localY"] as? Double {
-                model.goto(window: CGWindowID(wid), local: CGPoint(x: lx, y: ly), animated: animated, label: label)
+                model.goto(window: CGWindowID(wid), local: CGPoint(x: lx, y: ly),
+                           animated: animated, label: label, pid: pid)
+                refreshVisibility()          // 先判可见，再决定画不画
             } else if let x = o["x"] as? Double, let y = o["y"] as? Double {
-                model.goto(global: CGPoint(x: x, y: y), animated: animated, label: label)
+                model.goto(global: CGPoint(x: x, y: y), animated: animated, label: label, pid: pid)
+                model.suppressed = false
             }
         case "move":
             if let x = o["x"] as? Double, let y = o["y"] as? Double {
-                model.goto(global: CGPoint(x: x, y: y), animated: false, label: label)
+                model.goto(global: CGPoint(x: x, y: y), animated: false, label: label, pid: pid)
+                model.suppressed = false
             }
         case "press", "click":
             model.press(label: label)
@@ -265,14 +386,37 @@ final class CursorController {
             model.feedback((o["ok"] as? Bool) ?? true, label: label)
         case "hide":
             model.hide()
+        case "vis":
+            _ = refreshVisibility()
+            if model.anchored, let wid = model.windowId, model.targetPid > 0 {
+                visOut = TargetWindowVisibilityManager
+                    .report(pid: model.targetPid, windowId: wid, point: model.target).dict
+            }
         case "quit":
             model.hide()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { NSApp.terminate(nil) }
         default:
             break
         }
+        // 立刻把窗口摆到新位置再返回状态：
+        // 只靠 60fps 定时器的话，命令回包里带上的是「上一帧」的位置，
+        // 于是「回包里说在 A、屏上其实在 B」，测试和排障都会被误导。
+        present()
         var s = model.snapshot
         s["ok"] = true
+        s["winW"] = GHOST_WIN_SIZE
+        s["winH"] = GHOST_WIN_SIZE
+        s["winX"] = round(panel.frame.minX)          // AppKit 坐标（左下原点）
+        s["winY"] = round(panel.frame.minY)
+        // CG 坐标（左上原点），测试与 CLI 一律用它，避免两套坐标系互相打架
+        let screenH = NSScreen.screens.first?.frame.height ?? 0
+        s["winCGX"] = round(panel.frame.minX)
+        s["winCGY"] = round(screenH - panel.frame.maxY)
+        s["tipX"] = round(model.display.x)
+        s["tipY"] = round(model.display.y)
+        s["shown"] = windowShown
+        s["windowNumber"] = panel.windowNumber
+        if !visOut.isEmpty { s["visibility"] = visOut; visOut = [:] }
         return s
     }
 }
@@ -340,15 +484,12 @@ final class GhostServer {
 
 func runGhostDaemon() {
     let app = NSApplication.shared
-    // ⚠️ 这里不能随便改成 .accessory。
+    // ⚠️ 这里不能随便改成 .prohibited。
     //
-    // bootstrapWindowServer() 已经把策略设成 .prohibited；daemon 里再改成 .accessory
-    // 会触发一次「策略切换 → 应用被激活」，实测后果是用户前台被抢成 wbcu。
-    // 覆盖层只需要「能画」，不需要「能激活」，所以默认保持 .prohibited。
-    // 万一某些系统版本上 .prohibited 画不出窗口，可用 WBCU_GHOST_POLICY=accessory 回退。
-    // 必须是 .accessory：.prohibited 下窗口画不出来（实测紫色像素恒为 0）。
-    // 关键在「什么时候」设：主进程入口已为 daemon 跳过 .prohibited，
-    // 所以这里是从 .accessory 出生，不存在「切换 → 被激活」的问题。
+    // 覆盖层只需要「能画」，不需要「能激活」，所以默认保持 .accessory，
+    // 但真正的「不抢前台」是由 ThirdHandOverlay.app 的 LSUIElement 身份保证的
+    // （见 v0.4.1 结论：作为普通可激活进程 run() 会顶掉用户前台）。
+    // 万一某些系统版本上画不出窗口，可用 WBCU_GHOST_POLICY=prohibited 回退。
     let policy = ProcessInfo.processInfo.environment["WBCU_GHOST_POLICY"] ?? "accessory"
     app.setActivationPolicy(policy == "prohibited" ? .prohibited : .accessory)
     app.isAutomaticCustomizeTouchBarMenuItemEnabled = false
@@ -360,8 +501,6 @@ func runGhostDaemon() {
     // 用 CFRunLoopRun() 而不是 app.run()：
     // app.run() 会走 NSApplication 的启动完成流程，其中包含「把自己变成活动应用」，
     // 于是用户的当前前台被顶掉（实测 WorkBuddy → wbcu）。
-    // CFRunLoopRun() 只跑事件循环，不触发激活流程，窗口照样由 WindowServer 合成显示。
-    // 如果将来某个系统版本上窗口不显示，可回退：WBCU_GHOST_RUNLOOP=nsapp
     // 结论（实测）：
     //   * 绕开 app.run() 用 CFRunLoopRun() → 不抢焦点，但 AppKit 绘制周期起不来，
     //     覆盖层永远透明（窗口在、坐标对、画面空）。

@@ -36,9 +36,11 @@ sleep 0.5
 "$BIN" ghost start >/dev/null 2>&1
 sleep 1.5
 AFTER=$(front)
+MISMATCH=0
 if [ "$AFTER" = "$BASE" ]; then
   ok "daemon 启动后前台未变（${AFTER}）"
 else
+  MISMATCH=$((MISMATCH + 1))
   bad "daemon 启动抢了前台：$BASE → $AFTER"
 fi
 
@@ -75,7 +77,7 @@ V=$("$BIN" session verify --id "$SID" --expect "15" --json 2>&1)
 
 "$BIN" session end --id "$SID" >/dev/null 2>&1
 F=$(front)
-[ "$FINAL" = "$BASE" ] && ok "收尾后前台未变（${FINAL}）" || note "收尾后前台：$BASE → $FINAL"
+[ "$F" = "$BASE" ] && ok "收尾后前台未变（${F}）" || note "收尾后前台：${BASE} → ${F}"
 
 echo
 echo "[5] 干扰判定"
@@ -87,7 +89,7 @@ if [ "$USER_TOUCHED" = "1" ]; then
   note "  请在看屏幕空闲时重跑：./tests/regression/no-focus-steal.sh"
 else
   ok "全程无用户输入（idle ${IDLE1}s ≥ 耗时 ${ELAPSED}s）→ 前台断言有效"
-  [ "$MISMATCH" -eq 0 ] && [ "$STEALS" -eq 0 ] && ok "前台全程未变（0 次被抢）" || bad "前台被抢 ${STEALS} 次 + 启动阶段 ${MISMATCH} 次"
+  [ "${MISMATCH:-0}" -eq 0 ] && [ "$STEALS" -eq 0 ] && ok "前台全程未变（0 次被抢）" || bad "前台被抢 ${STEALS} 次 + 启动阶段 ${MISMATCH} 次"
   [ "${TARGET_ACTIVE:-0}" = "0" ] && ok "目标全程未被激活" || bad "目标被激活了"
 fi
 

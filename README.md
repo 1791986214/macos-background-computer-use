@@ -96,11 +96,15 @@ Third Hand 的目标：
 **一只属于 WorkBuddy 的独立虚拟鼠标。**
 
 - 独立逻辑坐标，锚定 `windowId + 窗口局部坐标`（窗口移动时 100ms 周期重算跟随）
-- 透明 Overlay，`ignoresMouseEvents = true` 事件全穿透；`.accessory` 不进 Dock、不抢焦点
+- **126×126 跟随小窗口**（对齐 Codex `Software Cursor` 实测尺寸），不是整屏透明面板；
+  光标走到哪，这个 126pt 的小窗就跟到哪，屏幕其余部分没有任何覆盖层
+- **只画在目标窗口真正可见的地方**：动手前先问「这个点现在还归目标窗口吗」，
+  目标被你的窗口盖住 / 被最小化 / 切到别的 Space → 整窗隐藏，绝不画到你的前台上
+- 透明、`ignoresMouseEvents = true` 事件全穿透；LSUIElement 身份，不进 Dock、不抢焦点
 - 层级 102：盖得住普通窗口与菜单，不盖系统 HUD / 通知中心
 - `easeOutCubic` 0.24s 平滑移动，点击涟漪 + 状态反馈（成功绿环 / 失败红环）
 - **不主动移动真实鼠标**，也不读取真实指针位置做「同步」
-- 任务结束自动隐藏 / 释放；daemon 崩溃只影响显示，不影响操作
+- 空闲 1.8s 自动隐藏（对齐 Codex 空闲时 `onscreen=false`）；daemon 崩溃只影响显示，不影响操作
 
 实现：AppKit `NSView.draw(_:)` + 60fps `Timer` 驱动动画，不依赖 Core Animation。
 
@@ -113,6 +117,9 @@ Third Hand 的目标：
 - **窗口坐标转换**：屏幕 ↔ 窗口局部，单一实现，含副屏负坐标
 - **窗口捕获与视觉定位**：`SCContentFilter(desktopIndependentWindow:)`
 - **操作结果验证**：AX 指纹前后对比
+- **可见性预判**：动手前判定目标窗口是 前台 / 后台 / 部分遮挡 / 完全遮挡 / 最小化 / 不在当前 Space
+- **如实报错**：`delivered`（事件进了进程）、`verified`（UI 真的变了）、`ok`（最终裁决）分开返回，
+  失败必带 `failureReason`——不允许「投递成功」冒充「操作成功」
 
 实测：指针距目标 553px、目标 `active=false`、前台不变，点击仍然生效。
 

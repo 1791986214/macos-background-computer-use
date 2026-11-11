@@ -23,11 +23,13 @@ struct StageTiming {
     var cursor = 0.0       // 虚拟光标动画等待（Fast 模式下应接近 0）
     var dispatch = 0.0     // 事件投递（AXPress / postToPid）
     var verify = 0.0       // 结果验证
+    var visibility = 0.0   // 目标窗口可见性判定（一次窗口列表快照）
     var total = 0.0
 
     func dict() -> [String: Any] {
         ["resolveMs": r(resolve), "captureMs": r(capture), "cursorMs": r(cursor),
-         "dispatchMs": r(dispatch), "verifyMs": r(verify), "totalMs": r(total)]
+         "dispatchMs": r(dispatch), "verifyMs": r(verify),
+         "visibilityMs": r(visibility), "totalMs": r(total)]
     }
     private func r(_ v: Double) -> Double { (v * 10).rounded() / 10 }
 }

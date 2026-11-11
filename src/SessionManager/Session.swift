@@ -540,23 +540,26 @@ private func sessionClick(_ args: Args) {
              "verifyMs": timing.verify, "cursorMs": timing.cursor,
              "totalMs": timing.total])
 
-    var out: [String: Any] = [
-        "ok": true, "session": s.id, "mode": outcome.mode,
-        "target": targetDesc, "verification": outcome.verification,
-        "verifyVia": outcome.via, "experience": expStatus,
-        "timing": timing.dict(),
-        "cursor": outcome.cursorInfo,
-        "targetActivated": NSRunningApplication(processIdentifier: s.pid)?.isActive ?? false,
-        "pointerMoved": false
-    ]
-    if let c = outcome.changed { out["uiChanged"] = c }
+    var out = actionReport(outcome, windowId: s.windowId, pid: s.pid,
+                           point: point, frame: s.windowFrame)
+    // 会话层保留自己的上下文字段
+    out["session"] = s.id
+    out["target"] = targetDesc
+    out["experience"] = expStatus
+    out["timing"] = timing.dict()
+    out["targetActivated"] = NSRunningApplication(processIdentifier: s.pid)?.isActive ?? false
     if !gJSONMode {
-        emitText(String(format: "✅ %@ exp=%@ verify=%@ via=%@  %.0fms (定位 %.0f / 投递 %.0f / 验证 %.0f)",
-                        outcome.mode as NSString, expStatus as NSString,
+        let mark = outcome.ok ? "✅" : "❌"
+        emitText(String(format: "%@ %@ exp=%@ verify=%@ via=%@  %.0fms (定位 %.0f / 投递 %.0f / 验证 %.0f)",
+                        mark as NSString, outcome.mode as NSString, expStatus as NSString,
                         outcome.verification as NSString, outcome.via as NSString,
                         timing.total, timing.resolve, timing.dispatch, timing.verify))
+        if !outcome.failureReason.isEmpty {
+            emitText("   原因=\(outcome.failureReason)  窗口状态=\(TargetWindowVisibilityManager.humanNote(outcome.visibility))")
+        }
     } else { emit(out) }
-    exit(0)
+    // 没做成就不返回 0
+    exit(outcome.ok ? 0 : 3)
 }
 
 // MARK: type（AXValue 优先，键盘兜底）

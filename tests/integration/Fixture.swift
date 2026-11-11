@@ -45,6 +45,19 @@ final class Logger {
         }
     }
 
+    /// 原样落盘一条已经在主线程组装好的记录（事件监视器用，不再碰状态文件）
+    func raw(_ d: [String: Any]) {
+        guard let line = try? JSONSerialization.data(withJSONObject: d, options: [.sortedKeys]),
+              let s = String(data: line, encoding: .utf8) else { return }
+        q.async {
+            if let h = FileHandle(forWritingAtPath: EVENTS) {
+                h.seekToEndOfFile(); h.write((s + "\n").data(using: .utf8)!); try? h.close()
+            } else {
+                try? (s + "\n").write(toFile: EVENTS, atomically: true, encoding: .utf8)
+            }
+        }
+    }
+
     func bump(_ key: String) {
         q.async {
             switch key {
@@ -72,6 +85,52 @@ final class Logger {
         if let data = try? JSONSerialization.data(withJSONObject: d, options: [.sortedKeys, .prettyPrinted]) {
             try? data.write(to: URL(fileURLWithPath: STATE))
         }
+    }
+}
+
+// MARK: - 全事件监视器
+//
+// 只记录「进程真的收到了什么」，不掺任何推断。
+// 有了它才能把失败原因切开：
+//   · 没有 monitor 行          → 事件根本没进进程（投递层失败）
+//   · 有 monitor 但按钮没回调  → AppKit 把事件吞了（firstMouse 语义）
+//   · 有 monitor 且回调了但值不对 → 坐标/命中层失败
+// 同时把投递方设置的 CGEvent 私有字段原样回读，验证 51/58/91/92 是否真的落到了事件上。
+func cgField(_ e: CGEvent?, _ n: UInt32) -> Int64? {
+    guard let e = e, let f = CGEventField(rawValue: n) else { return nil }
+    return e.getIntegerValueField(f)
+}
+
+func installEventMonitor() {
+    NSEvent.addLocalMonitorForEvents(matching: .any) { e in
+        // 只关心鼠标/键盘，避免被 timer 之类的杂音淹没日志
+        let interesting: Set<NSEvent.EventType> = [
+            .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp,
+            .otherMouseDown, .otherMouseUp, .mouseMoved, .leftMouseDragged,
+            .rightMouseDragged, .keyDown, .keyUp
+        ]
+        guard interesting.contains(e.type) else { return e }
+        let cg = e.cgEvent
+        let d: [String: Any] = [
+            "ts": Date().timeIntervalSince1970,
+            "kind": "monitor",
+            "type": e.type.rawValue,
+            "windowNumber": e.windowNumber,
+            "clickCount": e.clickCount,
+            "appActive": NSApp.isActive,
+            "keyWindow": NSApp.keyWindow?.windowNumber ?? -1,
+            "mainWindow": NSApp.mainWindow?.windowNumber ?? -1,
+            "locationInWindow": ["x": e.locationInWindow.x, "y": e.locationInWindow.y],
+            "f51": cgField(cg, 51) ?? -1,
+            "f58": cgField(cg, 58) ?? -1,
+            "f91": cgField(cg, 91) ?? -1,
+            "f92": cgField(cg, 92) ?? -1,
+            "hasWindowLoc": (cg?.getIntegerValueField(.mouseEventClickState) ?? -1) >= 0
+        ]
+        // 事件自身的「窗口局部坐标」：私有 CGEventGetWindowLocation 不在公开头文件，
+        // 这里用 locationInWindow 代替（AppKit 已用它做过换算，等价可读）。
+        Logger.shared.raw(d)
+        return e
     }
 }
 
@@ -182,10 +241,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     let webBridge = WebBridge()
     var webView: WKWebView!
     var targets: [String: NSView] = [:]
+    /// Web 按钮在 WebView 里的 CSS 矩形（左上原点，y 向下）。
+    /// 必须由 JS 实测出来：把整个 WKWebView 的中心当作按钮去点，
+    /// 只会点到 body 空白处，然后被误判成「引擎点不动 WebKit」。
+    var webBtnCSS = CGRect(x: 8, y: 8, width: 120, height: 32)
 
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureDir()
         try? FileManager.default.removeItem(atPath: EVENTS)
+        installEventMonitor()
         Logger.shared.event("app.launch", "app", nil)
 
         let rect = NSRect(x: 200, y: 120, width: 580, height: 700)
@@ -245,7 +309,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         document.getElementById('d').addEventListener('dragstart', () => L('dragstart'));
         </script></body></html>
         """, baseURL: nil)
-
         // 6) 拖拽区
         y -= 80
         let src = DragView(frame: NSRect(x: 20, y: y, width: 120, height: 46))
@@ -281,8 +344,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
     }
 
+    /// 通过文件给夹具下命令（minimize / deminimize / hide / show）
+    ///
+    /// 为什么要这个通道：osascript 的 `set miniaturized` 对未声明脚本支持的 App 会直接报
+    /// -10006，实测无法造出「真的最小化」状态；而引擎的 visible/minimized 判定必须对着
+    /// 真实状态验证，不能靠猜。所以由夹具自己提供可控入口。
+    func pollCommand() {
+        let p = "\(LAB)/cmd"
+        guard let raw = try? String(contentsOfFile: p, encoding: .utf8) else { return }
+        try? FileManager.default.removeItem(atPath: p)
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "minimize": window.miniaturize(nil)
+        case "deminimize": window.deminiaturize(nil)
+        case "hide": window.orderOut(nil)
+        case "show": window.makeKeyAndOrderFront(nil)
+        default: break
+        }
+        Logger.shared.event("cmd.applied", "app", nil, raw.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     /// 把每个控件的「CG 全局坐标矩形」发布出去（左上原点，与 CGEvent 一致）
     func publishTargets() {
+        pollCommand()
+        // 顺带校准 Web 按钮的 CSS 矩形（每次发布都刷一次，页面重排也不会失准）
+        webView?.evaluateJavaScript("""
+        (()=>{const b=document.getElementById('b');if(!b)return null;
+        const r=b.getBoundingClientRect();return [r.x,r.y,r.width,r.height];})()
+        """) { res, _ in
+            if let a = res as? [Double], a.count == 4 {
+                self.webBtnCSS = CGRect(x: a[0], y: a[1], width: a[2], height: a[3])
+            }
+        }
         guard let w = window, w.isVisible else { return }
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         var out: [String: Any] = [:]
@@ -308,6 +400,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             let cgY = screenH - s.maxY
             rects[name] = ["x": cgX, "y": cgY, "w": s.width, "h": s.height,
                            "cx": cgX + s.width / 2, "cy": cgY + s.height / 2]
+        }
+        // Web 按钮：CSS 矩形（y 向下）→ 视图坐标（y 向上）→ 窗口 → 屏幕 → CG
+        if let wv = webView, let sv = wv.superview {
+            let vr = sv.convert(wv.frame, to: nil)          // 窗口坐标（左下原点）
+            let cxWin = vr.minX + webBtnCSS.midX
+            let cyWin = vr.maxY - webBtnCSS.midY
+            let sp = w.convertPoint(toScreen: NSPoint(x: cxWin, y: cyWin))
+            let cgX = sp.x
+            let cgY = screenH - sp.y
+            rects["webBtn"] = ["x": sp.x - webBtnCSS.width / 2,
+                               "y": screenH - (sp.y + webBtnCSS.height / 2),
+                               "w": webBtnCSS.width, "h": webBtnCSS.height,
+                               "cx": cgX, "cy": cgY]
         }
         out["targets"] = rects
         if let d = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) {

@@ -28,17 +28,27 @@ echo "######## 集成测试：会话层 ########"
 
 if [ "$MODE" = "all" ]; then
   echo
-  echo "######## 回归测试：历史验收矩阵 ########"
-  # 需要 Calculator + GUI；首次跑可能需要重新授权
-  "$HERE/regression/verify.sh" com.apple.calculator || FAIL=$((FAIL + 1))
-
-  echo
   echo "######## 集成测试：后台投递对照（需 fixture） ########"
   if [ -x "$HERE/integration/build-fixture.sh" ]; then
     "$HERE/integration/build-fixture.sh" >/dev/null 2>&1 && \
       "$HERE/integration/background-demo.sh" || \
       echo "  ⚠️ fixture 未就绪，跳过"
   fi
+
+  echo
+  echo "######## 回归测试：v0.4.2 光标窗口与后台投递 ########"
+  # 这五条是本轮修复的验收面；任一条失败都不允许发版。
+  # 全部需要真实桌面 + GUI，缺授权时各自 warn 并计入 SKIPPED。
+  for t in cursor-window-bounds background-targeted-click window-switch-isolation \
+           occlusion-behavior ghost-cleanup; do
+    echo
+    "$HERE/regression/$t.sh" || FAIL=$((FAIL + 1))
+  done
+
+  echo
+  echo "######## 回归测试：历史验收矩阵 ########"
+  # 需要 Calculator + GUI；首次跑可能需要重新授权
+  "$HERE/regression/verify.sh" com.apple.calculator || FAIL=$((FAIL + 1))
 fi
 
 echo

@@ -5,6 +5,112 @@
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-11-12
+
+两件事：把虚拟光标从「整屏透明面板」改成「跟随目标窗口的小窗口」，
+以及把「投递了」和「做成了」彻底拆开。
+
+### 症状（用户原话）
+
+> 我能看到虚拟鼠标在我前台窗口飞来飞去。
+> 我切换窗口还会影响你点击，这没道理。
+
+### 一、虚拟光标：整屏面板 → 126×126 跟随小窗口
+
+**根因**（v0.4.1 实际代码）：
+
+```swift
+panel = GhostPanel(contentRect: screen.frame, ...)   // Ghost.swift:212
+view  = GhostView(frame: screen.frame)               // Ghost.swift:226
+```
+
+`screen.frame` —— 面板和画布都是整屏。透明并不等于「用户感知不到」：
+它是用户前台窗口上方一整块全屏窗口，任何窗口级合成、录屏、窗口列表都能看到它，
+而且光标一动，整块区域都要重绘。
+
+**修法**：
+
+- 面板与画布统一改为 `GHOST_WIN_SIZE = 126`（对齐 Codex `Software Cursor` 实测 126×126）
+- 视图改为 flipped（左上原点、y 向下），和 CGEvent 全局坐标同一套方向，不再翻 y
+- 每帧按「全局点 − 尖端内偏移」移动小窗，并夹在屏幕内；尖端由**实际窗口原点**反推，
+  所以贴边时指向的仍是真实像素
+- 标签超出小窗就截断，不做无边界扩张
+
+**但小窗本身不解决遮挡**：目标被你的窗口盖住时，小窗照样会把光标画到你窗口上面。
+所以同时加了下面这条。
+
+### 二、新增 `TargetWindowVisibilityManager`
+
+`src/InputDispatcher/Visibility.swift`。动手之前先回答「这个点现在还归目标窗口吗」：
+
+- 一次 `CGWindowListCopyWindowInfo(.optionOnScreenOnly)`（前→后顺序），O(n)
+- 只把「同层级、alpha > 0.02」的窗口算遮挡者（菜单栏 / Dock 的 layer≠0，不参与）
+- 15×15 采样网格估算可见比例（0~1），命中点单独判定是否被盖住
+- 输出状态：`front` / `background` / `partially_occluded` / `fully_occluded` / `minimized` / `off_screen`
+- 明确**不**做三件事：不 `AXRaise`、不激活 App、不切 Space —— 判定只用于降级与如实上报
+
+开销实测：`visibilityMs` P50 **0.6 ms**，首次调用 14 ms（窗口列表冷启动）。不引入后台扫描线程。
+
+### 三、投递结果结构化：禁止「静默成功」
+
+`ActionOutcome` 新增 `ok / delivered / failureReason / visibility / frontAppPreserved / physicalCursorPreserved`。
+
+- `delivered` = 事件真的进了目标进程
+- `verified` = 目标 UI 真的变了（`uiChanged`）
+- `ok` = 最终裁决；`verified=false` 时 `ok=false`，并带原因：
+  `target_minimized` / `target_off_screen` / `target_window_gone` /
+  `ax_press_no_observable_change` / `targeted_window_not_key_no_effect` /
+  `targeted_background_no_effect` / `targeted_no_observable_change`
+- `wbcu act` / `session click` 失败时退出码改为 **3**，脚本层无法把失败当成功
+
+### 四、重要更正：v0.4.1 的「遮挡下 targeted 静默失败」结论不成立
+
+v0.4.1 交接回执里写着「targeted 坐标投递在目标非前台时静默失败（verify=no_observable_change）」。
+v0.4.2 用受控 AppKit 夹具（NSButton / 自绘 CanvasView / WKWebView 按钮）重测 9 种组合，
+**没有复现该失败**：
+
+| 用例 | 状态 | 投递方式 | UI 真的变了 |
+|---|---|---|---|
+| E1 | 前台 | 字段51+58+窗口局部坐标 | ✅ |
+| E2 | 后台不遮挡 | 同上 | ✅ |
+| E3 | 后台且完全遮挡 | 同上 | ✅ |
+| E4 | 后台且完全遮挡 | AXPress | ✅ |
+| E5 | 后台不遮挡 · 自绘 Canvas | 坐标投递 | ✅ |
+| E6 | 被遮挡 + AX 设 main/focused | 坐标投递 | ✅ |
+| E7 | 被遮挡 · 自绘 Canvas | 坐标投递 | ✅ |
+| E8 | 被遮挡 · WKWebView 按钮 | 坐标投递 | ✅ |
+| E9 | 被遮挡 · WKWebView 按钮 | AXPress | ❌（无 AXPress，-25206） |
+
+追查下来，v0.4.1 那条结论最可能的来源是**测量误差**，而不是引擎缺陷：
+
+- 判据用了「清空后仍为 0」这类**不产生可观测变化**的操作
+- 点的是 `WKWebView` 视图中心，而按钮在左上角 120×32 —— 点到的是 body 空白处
+
+本轮把夹具改成用 JS 读 `getBoundingClientRect()` 发布按钮真实矩形后，同一个 WebKit 按钮
+在前台、后台、完全遮挡三种状态下**全部点中**。
+
+保留的结论只有一条：**坐标投递对遮挡免疫**（事件直接进目标进程队列，由字段 51 决定落到哪个窗口），
+而 `AXPress` 并非所有元素都有，两者必须并存、以「UI 是否真的变了」为唯一判据。
+
+### 五、顺手修掉的
+
+- `tests/regression/no-focus-steal.sh` 里两处未定义变量（`$FINAL` / `$MISMATCH`），
+  在 `set -u` 下会中途崩掉，导致这条回归之前是「看起来通过」而不是真通过
+- `osascript set miniaturized` 对未声明脚本支持的 App 直接 `-10006`，
+  最小化场景改由夹具自己的控制通道执行，避免造出「以为最小化了」的假状态
+
+### 六、新增回归测试（5 条，全部需要真实桌面）
+
+| 测试 | 断言 |
+|---|---|
+| `cursor-window-bounds.sh` | 窗口 126×126；尖端落在窗口内；贴边夹屏；hide 与空闲自动隐藏 |
+| `background-targeted-click.sh` | 后台点击 UI 真变；前台/物理鼠标不被动；最小化时如实失败 |
+| `window-switch-isolation.sh` | 点击途中切窗口仍命中；前台始终是用户应用；光标不漂移 |
+| `occlusion-behavior.sh` | 遮挡判定正确；光标整窗隐藏；禁止 `ok=true` + `uiChanged=false` |
+| `ghost-cleanup.sh` | stop 后 socket/进程/窗口全部清干净 |
+
+在 0.4.2 发布前，这 5 条 + 单元 27 项 + `no-focus-steal` 全部实跑通过（见 `docs/receipt-v0.4.2.md`）。
+
 ## [0.4.1] — 2026-11-11
 
 修复「虚拟光标 daemon 启动时抢走用户前台」——这是用户实际感受到的问题。

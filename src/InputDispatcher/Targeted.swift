@@ -199,10 +199,16 @@ func ensureGhostDaemon() {
     }
 }
 
-func ghostGoto(window: CGWindowID, local: CGPoint, animated: Bool = true, label: String = "") -> [String: Any]? {
+func ghostGoto(window: CGWindowID, local: CGPoint, animated: Bool = true,
+               label: String = "", pid: pid_t = 0) -> [String: Any]? {
     ensureGhostDaemon()
-    return ghostCall(["op": "goto", "windowId": Int(window), "localX": local.x, "localY": local.y,
-                      "animate": animated, "label": label])
+    var payload: [String: Any] = ["op": "goto", "windowId": Int(window),
+                                  "localX": local.x, "localY": local.y,
+                                  "animate": animated, "label": label]
+    // 把目标 pid 一起给 daemon：它要用这个 pid 判断「目标现在是不是前台」，
+    // 以及这个点有没有被别人的窗口盖住 —— 决定画不画光标。
+    if pid > 0 { payload["pid"] = Int(pid) }
+    return ghostCall(payload)
 }
 
 func ghostGoto(global p: CGPoint, animated: Bool = false, label: String = "") -> [String: Any]? {
@@ -254,6 +260,22 @@ struct ActionOutcome {
     var fingerprintAfter: String? = nil
     /// 观测元素超时（说明这条经验不可靠），调用方应把它从经验里剔掉
     var observeStale = false
+
+    // ── v0.4.2 新增：把「投递」和「成功」彻底分开 ──────────────
+    /// 事件的最终裁决。false 表示「我不认为这件事做成了」，调用方必须如实上报。
+    var ok = true
+    /// 事件是否真的进了目标进程（投递层的事）
+    var delivered = false
+    /// 没做成的具体原因；空串表示没有失败
+    var failureReason = ""
+    /// 动手之前目标窗口处于什么状态
+    var visibility = VisibilityReport()
+    /// 用户的当前前台 App 有没有被顶掉
+    var frontAppPreserved = true
+    /// 物理鼠标有没有被挪动
+    var physicalCursorPreserved = true
+    var frontBefore = ""
+    var frontAfter = ""
 }
 
 func performAgentAction(global point: CGPoint,
@@ -266,7 +288,22 @@ func performAgentAction(global point: CGPoint,
     var out = ActionOutcome()
     let local = windowLocal(from: point, in: windowFrame)
 
-    // ---- ① 定位目标元素 ----
+    // ---- ⓪ 先记录「不该被我改变的东西」----
+    // 这两条是硬约束：用户的物理鼠标、用户的当前前台 App。
+    // 任何一个被动过，都要在结果里如实标出来，而不是让它悄悄发生。
+    let frontAppBefore = NSWorkspace.shared.frontmostApplication
+    let mouseBefore = CGEvent(source: nil)?.location ?? .zero
+    out.frontBefore = frontAppBefore?.bundleIdentifier ?? ""
+
+    // ---- ① 目标窗口现在是什么状态 ----
+    // 只做一次窗口列表快照（O(n)），不做高频轮询。
+    let tVis = nowNs()
+    out.visibility = TargetWindowVisibilityManager.report(
+        pid: pid, windowId: windowId, point: point,
+        frontPid: frontAppBefore?.processIdentifier)
+    out.timing.visibility = msSince(tVis)
+
+    // ---- ② 定位目标元素 ----
     var tMark = nowNs()
     var element = options.preResolved
     if element == nil, options.allowAX {
@@ -278,9 +315,11 @@ func performAgentAction(global point: CGPoint,
     // 关键改动：旧实现先等 260ms 动画再发点击，把「给人看」的成本压进了关键路径。
     // 现在 fast 模式先投递、动画并行跑，视觉层永远不阻塞执行层。
     if options.showCursor {
-        if let st = ghostGoto(window: windowId, local: local, animated: true, label: label) {
+        if let st = ghostGoto(window: windowId, local: local, animated: true, label: label, pid: pid) {
             out.cursorInfo = ["used": true, "anchored": st["anchored"] ?? false,
-                              "windowId": st["windowId"] ?? 0, "phase": st["phase"] ?? ""]
+                              "windowId": st["windowId"] ?? 0, "phase": st["phase"] ?? "",
+                              "suppressed": st["suppressed"] ?? false,
+                              "winW": st["winW"] ?? 0, "winH": st["winH"] ?? 0]
         }
         tMark = nowNs()
         switch options.cursorMode {
@@ -301,14 +340,20 @@ func performAgentAction(global point: CGPoint,
 
     if let el = element {
         let r = AXUIElementPerformAction(el, kAXPressAction as CFString)
-        if r == .success { out.mode = "ax" } else { out.axErr = axErrorName(r) }
+        if r == .success { out.mode = "ax"; out.delivered = true } else { out.axErr = axErrorName(r) }
     }
 
     if out.mode != "ax" {
+        // 坐标投递是「进程级」的：事件直接进目标进程的事件队列，
+        // 由事件自带的窗口号决定落到哪个窗口 —— 因此目标窗口被别的应用盖住
+        // 并不会让事件落到遮挡者身上（实测：完全遮挡下仍能点中）。
+        // 这条结论只在 AppKit 原生控件上成立；WKWebView 一类自建事件管线的
+        // 视图不保证，所以真正算不算成功一律以「UI 有没有变」为准。
         targetedClick(at: point, pid: pid, windowId: windowId,
                       windowFrame: windowFrame, button: "left", clickCount: 1)
         out.escalated = (!options.allowAX || element == nil) ? false : true
         out.mode = "targeted"
+        out.delivered = true
     }
     if options.showCursor { _ = ghostPress(label) }
     out.timing.dispatch = msSince(tMark)
@@ -348,11 +393,86 @@ func performAgentAction(global point: CGPoint,
     }
     out.timing.verify = msSince(tMark)
 
+    // ---- ⑤ 裁决：投递 ≠ 成功 ----
+    //   changed == true   → 成功
+    //   changed == false  → 投递成功但目标 UI 没动 → 判定失败，并给出具体原因
+    //   changed == nil    → 未要求验证，只能算「已投递」
+    // 以前这里无论 changed 是什么都返回 ok:true，于是「点了没反应」被伪装成成功。
+    if let c = out.changed {
+        out.ok = c
+        if !c { out.failureReason = failureReasonFor(out) }
+    } else {
+        out.ok = out.delivered
+    }
+
+    // ---- ⑥ 硬约束自检：有没有动到不该动的东西 ----
+    out.frontAfter = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+    out.frontAppPreserved = (out.frontBefore == out.frontAfter)
+    let mouseAfter = CGEvent(source: nil)?.location ?? .zero
+    out.physicalCursorPreserved = hypot(mouseAfter.x - mouseBefore.x,
+                                        mouseAfter.y - mouseBefore.y) < 1.5
+
     if options.showCursor {
         _ = ghostFeedback(out.changed ?? true, out.changed == false ? "no change" : label)
     }
     out.timing.total = msSince(tStart)
     return out
+}
+
+/// 没做成的时候把「为什么」说清楚，而不是返回一个含糊的 ok
+func failureReasonFor(_ out: ActionOutcome) -> String {
+    let v = out.visibility
+    if v.state == .minimized { return "target_minimized" }
+    if v.state == .offScreen { return "target_off_screen" }
+    if v.state == .unknown { return "target_window_gone" }
+    if out.mode == "ax" { return "ax_press_no_observable_change" }
+    if !v.targetIsAppFrontWindow { return "targeted_window_not_key_no_effect" }
+    if !v.targetIsFrontApp { return "targeted_background_no_effect" }
+    return "targeted_no_observable_change"
+}
+
+// MARK: - 统一结果报告
+//
+// 一次动作的输出必须是「可审计的事实」，而不是一句 ok。
+// 字段语义：
+//   delivered              事件有没有真的进目标进程
+//   verified               UI 有没有真的变（null = 没要求验证）
+//   ok                     我的最终裁决 = verified，未验证时退化为 delivered
+//   method                 ax / targeted
+//   failureReason          没做成的原因（ok=false 时非空）
+//   frontAppPreserved      用户前台有没有被顶掉
+//   physicalCursorPreserved 物理鼠标有没有被挪动
+func actionReport(_ o: ActionOutcome, windowId: CGWindowID, pid: pid_t,
+                  point: CGPoint, frame: CGRect) -> [String: Any] {
+    let loc = windowLocal(from: point, in: frame)
+    var r: [String: Any] = [
+        "ok": o.ok,
+        "delivered": o.delivered,
+        "verified": o.changed.map { $0 as Any } ?? NSNull(),
+        "method": o.mode,
+        "mode": o.mode,                       // 兼容旧字段名
+        "failureReason": o.failureReason,
+        "targetWindowId": Int(windowId),
+        "targetPid": Int(pid),
+        "windowId": Int(windowId),            // 兼容旧字段名
+        "pid": Int(pid),                      // 兼容旧字段名
+        "escalatedFromAX": o.escalated,
+        "axError": o.axErr,
+        "global": ["x": point.x, "y": point.y],
+        "windowLocal": ["x": loc.x, "y": loc.y],
+        "cursor": o.cursorInfo,
+        "verification": o.verification,
+        "verifyVia": o.via,
+        "visibility": o.visibility.dict,
+        "frontAppPreserved": o.frontAppPreserved,
+        "frontBefore": o.frontBefore,
+        "frontAfter": o.frontAfter,
+        "physicalCursorPreserved": o.physicalCursorPreserved,
+        "pointerMoved": !o.physicalCursorPreserved,
+        "timing": o.timing.dict()
+    ]
+    if let c = o.changed { r["uiChanged"] = c }
+    return r
 }
 
 // MARK: - 兼容别名（旧命令名）
@@ -386,6 +506,35 @@ func findPressableElement(pid: pid_t, at point: CGPoint) -> AXUIElement? {
     }
     visit(appElement(pid), 0)
     return best?.el
+}
+
+// MARK: - 可见性查询命令（`wbcu vis`）
+//
+// 单独暴露出来，是为了让回归测试能直接问「这个点现在归谁」，
+// 而不必通过一次真实点击去反推。它只读，不做任何改变。
+func cmdVis(_ args: Args) {
+    gJSONMode = args.flag("json")
+    var (pid, wid) = inputTarget(args)
+    let x = args.dbl("x"), y = args.dbl("y")
+    guard let w = wid else { fail("需要 --window <id>", code: 5) }
+    let all = listCGWindows(onScreenOnly: false)
+    guard let rec = all.first(where: { $0.id == w }) else { fail("找不到窗口 \(w)", code: 5) }
+    if pid == nil { pid = rec.pid }
+    guard let pd = pid else { fail("无法确定目标 pid", code: 5) }
+    let pt: CGPoint? = (x != nil && y != nil) ? CGPoint(x: x!, y: y!) : nil
+    let r = TargetWindowVisibilityManager.report(pid: pd, windowId: w, point: pt)
+    var res = r.dict
+    res["ok"] = true
+    res["windowId"] = Int(w)
+    res["pid"] = Int(pd)
+    res["human"] = TargetWindowVisibilityManager.humanNote(r)
+    res["windowFrame"] = ["x": rec.bounds.minX, "y": rec.bounds.minY,
+                          "w": rec.bounds.width, "h": rec.bounds.height]
+    if gJSONMode { emit(res) } else {
+        emitText("窗口 \(w) (\(rec.owner)) → \(r.state.rawValue)：\(res["human"] ?? "")"
+                 + (pt != nil ? "  点(\(Int(x!)),\(Int(y!))) 可见=\(r.pointVisible)" : ""))
+    }
+    exit(0)
 }
 
 // MARK: - ghost 子命令
@@ -463,20 +612,18 @@ func cmdAct(_ args: Args) {
     opts.cursorMode = (args.str("ghost-mode") ?? "fast").lowercased()
     let outcome = performAgentAction(global: p, pid: pd, windowId: w, windowFrame: f,
                                      label: label, options: opts)
-    let loc = windowLocal(from: p, in: f)
-    var res: [String: Any] = [
-        "ok": true, "mode": outcome.mode, "escalatedFromAX": outcome.escalated,
-        "axError": outcome.axErr, "windowId": Int(w), "pid": Int(pd),
-        "global": ["x": p.x, "y": p.y], "windowLocal": ["x": loc.x, "y": loc.y],
-        "cursor": outcome.cursorInfo, "verification": outcome.verification,
-        "verifyVia": outcome.via, "timing": outcome.timing.dict(), "pointerMoved": false
-    ]
-    if let c = outcome.changed { res["uiChanged"] = c }
+    let res = actionReport(outcome, windowId: w, pid: pd, point: p, frame: f)
     if gJSONMode { emit(res) }
     else {
         let cur = (outcome.cursorInfo["used"] as? Bool) ?? false
-        emitText("✅ \(outcome.mode) @(\(Int(p.x)),\(Int(p.y)))  cursor=\(cur ? "shown" : "off")  "
-                 + "verify=\(outcome.verification)  \(Int(outcome.timing.total))ms")
+        let mark = outcome.ok ? "✅" : "❌"
+        emitText("\(mark) \(outcome.mode) @(\(Int(p.x)),\(Int(p.y)))  cursor=\(cur ? "shown" : "off")  "
+                 + "verify=\(outcome.verification)  \(Int(outcome.timing.total))ms"
+                 + (outcome.failureReason.isEmpty ? "" : "  原因=\(outcome.failureReason)"))
+        if !outcome.visibility.note.isEmpty {
+            emitText("   窗口状态：\(TargetWindowVisibilityManager.humanNote(outcome.visibility))")
+        }
     }
-    exit(0)
+    // 没做成就不返回 0：让调用方（脚本 / Skill / 上层 Agent）无法把失败当成功
+    exit(outcome.ok ? 0 : 3)
 }

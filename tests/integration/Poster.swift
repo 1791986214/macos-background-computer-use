@@ -29,6 +29,7 @@ var target = "btnPlain"
 var action = "click"
 var cover: String? = nil
 var primer = false
+var minimize = false
 var jsonOut = false
 var repeatCount = 1
 
@@ -40,6 +41,7 @@ while let a = it.next() {
     case "--action": action = it.next() ?? action
     case "--cover": cover = it.next()
     case "--primer": primer = true
+    case "--minimize": minimize = true
     case "--json": jsonOut = true
     case "--repeat": repeatCount = Int(it.next() ?? "1") ?? 1
     default: break
@@ -121,6 +123,17 @@ if let c = cover {
     }
 }
 
+// ---------- 最小化 ----------
+if minimize {
+    let appEl = AXUIElementCreateApplication(pid)
+    var wv: CFTypeRef?
+    if AXUIElementCopyAttributeValue(appEl, kAXMainWindowAttribute as CFString, &wv) == .success,
+       let w = wv {
+        AXUIElementSetAttributeValue(w as! AXUIElement, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
+    }
+    Thread.sleep(forTimeInterval: 0.7)
+}
+
 // ---------- 投递 ----------
 func postMouse(_ type: CGEventType, _ state: Int64 = 1) {
     guard let e = CGEvent(mouseEventSource: nil, mouseType: type,
@@ -145,6 +158,13 @@ func postMouse(_ type: CGEventType, _ state: Int64 = 1) {
     case "w5158local":
         e.setIntegerValueField(F51, value: Int64(winNum))
         e.setIntegerValueField(F58, value: 12345)
+        setWindowLocation?(e, localPoint)
+    case "keywin":
+        // 只把窗口设成 main/focused（不改 z 序、不激活 App），然后再投递
+        e.setIntegerValueField(F51, value: Int64(winNum))
+        e.setIntegerValueField(F58, value: 12345)
+        e.setIntegerValueField(F91, value: Int64(winNum))
+        e.setIntegerValueField(F92, value: Int64(winNum))
         setWindowLocation?(e, localPoint)
     default:
         break
@@ -201,6 +221,23 @@ if mode == "ax" {
     default: postKey(0)
     }
 } else {
+    // keywin：先只把目标窗口设为 main/focused。
+    // 这是「让 AppKit 认为窗口已经是 key」的最小动作 —— 不 activate App、不改 z 序、
+    // 不调 AXRaise，因此不会抢用户前台、也不会把窗口顶到最前面。
+    if mode == "keywin" {
+        let appEl = AXUIElementCreateApplication(pid)
+        var wv: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appEl, kAXMainWindowAttribute as CFString, &wv) == .success,
+           let w = wv {
+            let winEl = w as! AXUIElement
+            let r1 = AXUIElementSetAttributeValue(winEl, kAXMainAttribute as CFString, kCFBooleanTrue)
+            let r2 = AXUIElementSetAttributeValue(winEl, "AXFocused" as CFString, kCFBooleanTrue)
+            axError = "AXMain=\(r1.rawValue) AXFocused=\(r2.rawValue)"
+        } else {
+            axError = "no AXMainWindow"
+        }
+        Thread.sleep(forTimeInterval: 0.08)
+    }
     if primer {
         if let m = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left) {
             m.postToPid(pid)

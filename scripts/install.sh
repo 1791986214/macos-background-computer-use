@@ -25,6 +25,16 @@ mkdir -p "$BIN_DST" "$SHARE"
 install -m 0755 "$REPO/bin/wbcu" "$BIN_DST/wbcu"
 install -m 0644 "$REPO/mcp/wbcu-mcp.mjs" "$SHARE/wbcu-mcp.mjs"
 
+# 覆盖层 helper bundle（LSUIElement）：虚拟光标 daemon 必须以此身份运行，
+# 否则它启动时会把自己变成前台应用，把用户正在用的 App 顶掉。
+if [ -d "$REPO/build/ThirdHandOverlay.app" ]; then
+  rm -rf "$SHARE/ThirdHandOverlay.app"
+  cp -R "$REPO/build/ThirdHandOverlay.app" "$SHARE/"
+  echo "   已安装覆盖层：$SHARE/ThirdHandOverlay.app（LSUIElement）"
+else
+  echo "   ⚠️ 未找到 build/ThirdHandOverlay.app，先跑 ./scripts/build.sh"
+fi
+
 # MCP 启动器：动态解析 node，不硬编码版本号路径，WorkBuddy 升级 node 不会断链
 cat > "$BIN_DST/wbcu-mcp" <<'LAUNCHER'
 #!/bin/bash
@@ -53,7 +63,7 @@ if [ "$WITH_SKILL" = "1" ]; then
   for legacy in macos-background-computer-use; do
     if [ -d "$HOME/.workbuddy/skills/$legacy" ]; then
       rm -rf "$HOME/.workbuddy/skills/$legacy"
-      echo "   已移除旧技能：$legacy（已改名 workbuddy-third-hand）"
+      echo "   已移除旧技能：${legacy}（已改名 workbuddy-third-hand）"
     fi
   done
   rm -rf "$HOME/.workbuddy/skills/workbuddy-third-hand"

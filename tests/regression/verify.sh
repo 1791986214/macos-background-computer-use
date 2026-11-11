@@ -85,7 +85,7 @@ check "捕获中 AX 窗口数+1" "2" "$(echo "$EXP" | field "['duringCapture']['
 check "停止后指示器消失(AX)" "0" "$(echo "$EXP" | field "['afterStop']['axShares']")"
 check "停止后 AX 窗口数还原" "1" "$(echo "$EXP" | field "['afterStop']['axWindowCount']")"
 PB=$(echo "$EXP" | field "['duringCapture']['purple']")
-if [ "$PB" -gt 100 ] 2>/dev/null; then ROWS+=("✅|捕获中标题栏紫色像素|$PB"); PASS=$((PASS+1)); else ROWS+=("⚠️|捕获中标题栏紫色像素|$PB（窗口可能被遮挡）"); fi
+if [ "$PB" -gt 100 ] 2>/dev/null; then ROWS+=("✅|捕获中标题栏紫色像素|$PB"); PASS=$((PASS+1)); else ROWS+=("⚠️|捕获中标题栏紫色像素|${PB}（窗口可能被遮挡）"); fi
 
 # 8. 资源释放
 check "无残留 wbcu 进程" "" "$(pgrep -x wbcu | tr -d '[:space:]')"

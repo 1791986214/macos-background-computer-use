@@ -5,6 +5,42 @@
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-11-11
+
+修复「虚拟光标 daemon 启动时抢走用户前台」——这是用户实际感受到的问题。
+
+### 症状
+
+启动 `wbcu ghost start`（或任何会自动拉起 daemon 的操作）后，
+用户的前台应用从原来的 App 变成 `wbcu`。计算器、WorkBuddy 等被瞬间顶掉。
+
+### 根因
+
+daemon 是个 `NSApplication`，被当作普通可激活进程拉起。
+它调 `app.run()` 完成启动流程时会被系统激活，前台就变了。
+
+排查过程中排除的三个思路（都实测过，无效）：
+
+| 尝试 | 结果 |
+|---|---|
+| `setActivationPolicy(.prohibited)` | 不抢前台，但窗口画不出来（紫色像素恒为 0） |
+| `NSApp.deactivate()` | 抢到的激活不会还回去 |
+| CLI 侧记录前台、启动后 `activate` 还原 | 时机太早，被 daemon 随后的激活覆盖；还原偏差还会把焦点还给错的应用 |
+
+### 修法
+
+把 daemon 打进 **`LSUIElement` 的 helper bundle**（`ThirdHandOverlay.app`），
+以代理型 App 身份运行：能渲染窗口，但**从根上不参与应用激活**，也就没有可抢的焦点。
+`scripts/build.sh` 自动产出该 bundle，`install.sh` 一并安装；找不到 bundle 时回退到原二进制。
+
+### 新增
+
+- `tests/regression/no-focus-steal.sh`：盯死「daemon 启动 / 连续点击 / 收尾」三个阶段的前台变化，
+  并带 `idle` 干扰判定（期间有人操作则不做结论，避免把用户的切换算成引擎的锅）
+- 单元测试新增 lint：shell 脚本里 `$VAR` 紧贴中文必须写成 `${VAR}`
+  （这个坑连续踩了两次，一次 `unbound variable` 让整段测试挂掉）
+
+
 ## [0.4.0] — 2026-11-11
 
 Third Hand 2.0：把固定等待换成测量驱动的优化，并加入应用经验记忆。

@@ -13,7 +13,7 @@ echo "== 单元测试 =="
 note "二进制: $BIN"
 
 if [ ! -x "$BIN" ]; then
-  bad "找不到可执行文件：$BIN（先跑 ./scripts/build.sh）"
+  bad "找不到可执行文件：${BIN}（先跑 ./scripts/build.sh）"
   summary; exit 1
 fi
 
@@ -66,6 +66,16 @@ if grep -rq "_AXUIElementGetWindow" "$SRC" 2>/dev/null; then
   fi
 else
   ok "未依赖 _AXUIElementGetWindow"
+fi
+
+# 2.3b shell 脚本里 $VAR 紧跟中文会被当成变量名的一部分（zsh/bash 都会），
+#      必须写成 ${VAR}。这个坑踩过两次，做成检查。
+CJK_BAD=$(grep -rEn '\$[A-Za-z_][A-Za-z0-9_]*[^ -~\n]' "$REPO_ROOT/scripts" "$REPO_ROOT/tests" --include="*.sh" 2>/dev/null | head -5)
+if [ -n "$CJK_BAD" ]; then
+  bad "shell 脚本存在 \$VAR 紧贴中文（应写 \${VAR}）："
+  echo "$CJK_BAD" | sed 's/^/     /'
+else
+  ok "shell 变量边界正确（无 \$VAR 紧贴中文）"
 fi
 
 # 2.4 源码里不得出现「假装成功」的兜底

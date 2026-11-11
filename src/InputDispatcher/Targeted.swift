@@ -156,19 +156,45 @@ func ghostCall(_ payload: [String: Any], timeoutMs: Int = 900) -> [String: Any]?
     return obj
 }
 
+/// 找覆盖层 bundle 的可执行文件（不存在就回退到当前二进制）
+func ghostOverlayBundleExecutable() -> String? {
+    let candidates = [
+        FileManager.default.currentDirectoryPath + "/build/ThirdHandOverlay.app/Contents/MacOS/wbcu",
+        NSHomeDirectory() + "/.local/share/wbcu/ThirdHandOverlay.app/Contents/MacOS/wbcu"
+    ]
+    for c in candidates where FileManager.default.isExecutableFile(atPath: c) { return c }
+    return nil
+}
+
 func ensureGhostDaemon() {
     if ghostDaemonAlive(), ghostCall(["op": "ping"], timeoutMs: 300) != nil { return }
+    // 记下用户当前的前台 App，通过环境变量交给 daemon：
+    // daemon 是个 NSApplication，启动完成后会被系统激活（前台变成 wbcu）。
+    // 由 daemon 自己在「启动完成」之后还原前台，顺序才确定 ——
+    // 在 CLI 这边还原会因为时机太早而被 daemon 随后的激活覆盖（实测竞态）。
+    let frontBefore = NSWorkspace.shared.frontmostApplication
     try? FileManager.default.removeItem(atPath: GHOST_SOCK_PATH)
-    let exe = CommandLine.arguments[0]
+    // 优先用 LSUIElement bundle 里的可执行文件：
+    // 它是「代理型 App」，NSApp.run() 渲染窗口但不会把自己激活，从根上不抢前台。
+    let bundleExe = ghostOverlayBundleExecutable()
+    let exe = bundleExe ?? CommandLine.arguments[0]
     let path = exe.hasPrefix("/") ? exe : (FileManager.default.currentDirectoryPath + "/" + exe)
     let p = Process()
     p.executableURL = URL(fileURLWithPath: path)
     p.arguments = ["ghost", "daemon"]
+    var env = ProcessInfo.processInfo.environment
+    if let pid = frontBefore?.processIdentifier, pid != getpid() {
+        env["WBCU_GHOST_RESTORE_PID"] = String(pid)
+    }
+    p.environment = env
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
     try? p.run()
     for _ in 0..<50 {
-        if ghostDaemonAlive(), ghostCall(["op": "ping"], timeoutMs: 300) != nil { return }
+        if ghostDaemonAlive(), ghostCall(["op": "ping"], timeoutMs: 300) != nil {
+            // 前台还原由 daemon 自己完成（见 runGhostDaemon），这里只等它就绪
+            return
+        }
         usleep(50_000)
     }
 }

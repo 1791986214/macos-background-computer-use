@@ -82,8 +82,14 @@ func emitText(_ s: String) { print(s) }
 /// 建立与 WindowServer 的 CoreGraphics 会话连接。
 /// 纯 CLI 进程若直接调用依赖 CGS 的 API（如 _AXUIElementGetWindow / SCScreenshotManager），
 /// 会命中 CGS_REQUIRE_INIT 断言并 SIGABRT。触碰 NSApplication 与一次 CGWindowList 即可完成初始化。
+/// ghost daemon 需要 .accessory 才能把覆盖层画出来。
+/// 如果这里先设 .prohibited、daemon 里再切 .accessory，那次「策略切换」会让
+/// 进程被激活，用户前台被抢（实测：WorkBuddy → wbcu）。
+/// 所以 daemon 走这条路径时跳过策略设置，让它「从出生就是 accessory」。
+var gSkipActivationPolicy = false
+
 func bootstrapWindowServer() {
-    if NSApplication.shared.activationPolicy() != .prohibited {
+    if !gSkipActivationPolicy, NSApplication.shared.activationPolicy() != .prohibited {
         NSApplication.shared.setActivationPolicy(.prohibited)
     }
     _ = CGMainDisplayID()

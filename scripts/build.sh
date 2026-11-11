@@ -48,4 +48,33 @@ swiftc \
   -framework CoreImage
 
 echo "built: $OUT  (sdk=$(basename "$SDK"), files=${#SOURCES[@]})"
+
+# 覆盖层辅助 bundle：虚拟光标 daemon 必须是「代理型 App」（LSUIElement），
+# 否则它作为普通可激活进程启动时会顶掉用户前台（实测：WorkBuddy → wbcu）。
+# 用「事后把前台还回去」去补是错的：抢的那一下用户已经感觉到了，
+# 而且还原时机一旦有偏差，会把焦点还给错误的应用（实测还成了 ChatGPT）。
+make_overlay_bundle() {
+  local app="$REPO_DIR/build/ThirdHandOverlay.app"
+  rm -rf "$app"
+  mkdir -p "$app/Contents/MacOS"
+  cp "$OUT" "$app/Contents/MacOS/wbcu"
+  cat > "$app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleName</key><string>ThirdHandOverlay</string>
+<key>CFBundleIdentifier</key><string>com.workbuddy.thirdhand.overlay</string>
+<key>CFBundleExecutable</key><string>wbcu</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleShortVersionString</key><string>0.4.1</string>
+<key>LSUIElement</key><true/>
+<key>LSBackgroundOnly</key><false/>
+<key>NSHighResolutionCapable</key><true/>
+<key>LSMinimumSystemVersion</key><string>14.0</string>
+</dict></plist>
+PLIST
+  codesign --force --sign - "$app" 2>/dev/null || true
+  echo "built overlay: $app (LSUIElement, 不参与应用切换)"
+}
+make_overlay_bundle
 "$OUT" version

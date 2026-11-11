@@ -233,6 +233,10 @@ final class CursorController {
         animTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { _ in
             self.model.tick()
             self.view.needsDisplay = true
+            // 走 CFRunLoopRun() 时不经过 NSApp 的绘制周期，
+            // 只设 needsDisplay 不会真的重绘（实测：窗口在、坐标对、画布全透明）。
+            // 所以每个 tick 主动 flush 一次。
+            self.view.displayIfNeeded()
         }
         anchorTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
             self.model.refreshAnchor()
@@ -336,10 +340,45 @@ final class GhostServer {
 
 func runGhostDaemon() {
     let app = NSApplication.shared
-    app.setActivationPolicy(.accessory)
+    // ⚠️ 这里不能随便改成 .accessory。
+    //
+    // bootstrapWindowServer() 已经把策略设成 .prohibited；daemon 里再改成 .accessory
+    // 会触发一次「策略切换 → 应用被激活」，实测后果是用户前台被抢成 wbcu。
+    // 覆盖层只需要「能画」，不需要「能激活」，所以默认保持 .prohibited。
+    // 万一某些系统版本上 .prohibited 画不出窗口，可用 WBCU_GHOST_POLICY=accessory 回退。
+    // 必须是 .accessory：.prohibited 下窗口画不出来（实测紫色像素恒为 0）。
+    // 关键在「什么时候」设：主进程入口已为 daemon 跳过 .prohibited，
+    // 所以这里是从 .accessory 出生，不存在「切换 → 被激活」的问题。
+    let policy = ProcessInfo.processInfo.environment["WBCU_GHOST_POLICY"] ?? "accessory"
+    app.setActivationPolicy(policy == "prohibited" ? .prohibited : .accessory)
+    app.isAutomaticCustomizeTouchBarMenuItemEnabled = false
     let controller = CursorController()
     let server = GhostServer(controller: controller)
     controller.setup()
     server.start()
+
+    // 用 CFRunLoopRun() 而不是 app.run()：
+    // app.run() 会走 NSApplication 的启动完成流程，其中包含「把自己变成活动应用」，
+    // 于是用户的当前前台被顶掉（实测 WorkBuddy → wbcu）。
+    // CFRunLoopRun() 只跑事件循环，不触发激活流程，窗口照样由 WindowServer 合成显示。
+    // 如果将来某个系统版本上窗口不显示，可回退：WBCU_GHOST_RUNLOOP=nsapp
+    // 结论（实测）：
+    //   * 绕开 app.run() 用 CFRunLoopRun() → 不抢焦点，但 AppKit 绘制周期起不来，
+    //     覆盖层永远透明（窗口在、坐标对、画面空）。
+    //   * NSApp.deactivate() → 抢到的激活不会还回去，无效。
+    //   * 在 CLI 里还原前台 → 太早，被 daemon 随后的激活覆盖（竞态）。
+    // 所以：照常 run()，由 daemon 自己在启动完成后把前台还给用户原来的 App。
+    if let raw = ProcessInfo.processInfo.environment["WBCU_GHOST_RESTORE_PID"],
+       let restorePid = pid_t(raw) {
+        for delay in [0.15, 0.45, 0.9] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard let app = NSRunningApplication(processIdentifier: restorePid),
+                      !app.isTerminated else { return }
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier != restorePid {
+                    app.activate(options: [])
+                }
+            }
+        }
+    }
     app.run()
 }

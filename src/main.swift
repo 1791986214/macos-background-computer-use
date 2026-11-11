@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-let VERSION = "0.4.0"
+let VERSION = "0.4.1"
 
 func usage() {
     print("""
@@ -78,6 +78,9 @@ if args.flag("pretty") { gPretty = true }
 // 关键：先建立 WindowServer/CGS 连接。
 // 否则 _AXUIElementGetWindow、SCScreenshotManager 等在冷启动时会踩到
 // "Assertion failed: (did_initialize), function CGS_REQUIRE_INIT"。
+if cmd == "ghost", Array(argv.dropFirst()).first == "daemon" {
+    gSkipActivationPolicy = true
+}
 bootstrapWindowServer()
 
 switch cmd {

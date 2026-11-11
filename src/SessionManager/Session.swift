@@ -370,94 +370,191 @@ private func sessionInspect(_ args: Args) {
 private func sessionClick(_ args: Args) {
     var s = needSession(args)
     _ = refreshSessionWindow(&s)
+
     let showCursor = !args.flag("no-ghost") && s.ghostEnabled
     let verify = !args.flag("no-verify")
     let label = args.str("label") ?? "click"
+    let cursorMode = (args.str("ghost-mode") ?? "fast").lowercased()
+    let useExperience = !args.flag("no-experience")
+    let tStart = nowNs()
 
     var point: CGPoint
     var targetDesc: [String: Any] = [:]
+    var preResolved: AXUIElement? = nil
+    var prePath: [Int]? = nil
+    var learnLabel = ""
+    var learnRole = ""
+    var learnIdentifier = ""
+    var observeEl: AXUIElement? = nil
+    var observePath: [Int]? = nil
+    var snapBefore: AXSnapshot? = nil
+    var expStatus = "disabled"
+    var resolveMs = 0.0
 
+    // ---------- 1) 定位目标 ----------
+    let tResolve = nowNs()
     if let idx = args.int("element") {
         guard let el = sessionElement(s, index: idx) else {
             emitError(CUError.noPressableElement, "index \(idx) 无效：先跑 wbcu session inspect 重新取快照")
         }
-        let acts = axActions(el)
-        if acts.contains(kAXPressAction as String) && !args.flag("force-coords") {
-            // 纯语义路径：不需要坐标，也不需要激活
-            let fpBefore = verify ? axFingerprint(pid: s.pid) : ("", 0)
-            if showCursor, let p = axPoint(el, kAXPositionAttribute), let sz = axSize(el, kAXSizeAttribute) {
-                _ = ghostGoto(window: s.windowId,
-                              local: windowLocal(from: CGPoint(x: p.x + sz.width / 2,
-                                                               y: p.y + sz.height / 2),
-                                                 in: s.windowFrame),
-                              animated: true, label: label)
-                usleep(240_000)
-            }
-            let r = AXUIElementPerformAction(el, kAXPressAction as CFString)
-            guard r == .success else {
-                emitError(CUError.noPressableElement, "AXPress 失败: \(axErrorName(r))")
-            }
-            if showCursor { _ = ghostPress(label) }
-            var changed: Bool? = nil
-            if verify {
-                usleep(220_000)
-                changed = axFingerprint(pid: s.pid).hash != fpBefore.0
-            }
-            if showCursor { _ = ghostFeedback(changed ?? true, label) }
-            s.actionCount += 1
-            s.lastVerification = changed == nil ? "not_requested" : (changed! ? "changed" : "no_observable_change")
-            saveSession(s)
-            var out: [String: Any] = ["ok": true, "session": s.id, "mode": "ax",
-                                      "element": idx, "actions": acts,
-                                      "verification": s.lastVerification,
-                                      "targetActivated": NSRunningApplication(processIdentifier: s.pid)?.isActive ?? false,
-                                      "pointerMoved": false]
-            if verify { out["uiChanged"] = changed! }
-            if !gJSONMode {
-                emitText("✅ ax press[\(idx)] verify=\(s.lastVerification)")
-            } else { emit(out) }
-            exit(0)
+        preResolved = el
+        if let paths = loadSnapshotPaths(s.pid), idx < paths.count { prePath = paths[idx] }
+        learnRole = axStr(el, kAXRoleAttribute) ?? ""
+        learnIdentifier = axStr(el, "AXIdentifier") ?? ""
+        learnLabel = axStr(el, kAXTitleAttribute) ?? axStr(el, kAXDescriptionAttribute) ?? ""
+        expStatus = "explicit"
+        if let p = axPoint(el, kAXPositionAttribute), let sz = axSize(el, kAXSizeAttribute) {
+            point = CGPoint(x: p.x + sz.width / 2, y: p.y + sz.height / 2)
+        } else {
+            emitError(CUError.noPressableElement, "元素 \(idx) 没有坐标")
         }
-        guard let p = axPoint(el, kAXPositionAttribute), let sz = axSize(el, kAXSizeAttribute) else {
-            emitError(CUError.noPressableElement, "元素 \(idx) 没有坐标，无法坐标点击")
-        }
-        point = CGPoint(x: p.x + sz.width / 2, y: p.y + sz.height / 2)
-        targetDesc = ["element": idx, "role": axStr(el, kAXRoleAttribute) ?? "",
-                      "title": axStr(el, kAXTitleAttribute) ?? ""]
+        targetDesc = ["element": idx]
+
     } else if let text = args.str("text") {
-        let snap = walkAX(pid: s.pid, maxDepth: 14, maxNodes: 2000,
-                          includeActions: true, skipMenuBar: true)
-        saveSnapshot(snap)
-        let exact = args.flag("exact")
-        let needle = text.lowercased()
-        let hit = snap.items.first { it in
-            let cands = [it.title, it.value, it.desc, it.identifier].map { $0.lowercased() }
-            if exact { return cands.contains(needle) }
-            return cands.joined(separator: " ").contains(needle)
+        learnLabel = text
+        // 先看经验库：命中就 O(depth) 回查，跳过整树遍历
+        if useExperience, let hit = expLookup(app: s.bundleId, pid: s.pid, intent: "click", label: text) {
+            preResolved = hit.element
+            prePath = hit.entry.path
+            learnRole = hit.entry.role
+            learnIdentifier = hit.entry.identifier
+            expStatus = "hit(\(hit.entry.status))"
+            resolveMs = hit.resolveMs
+            // 事件驱动验证默认关闭：
+            // 实测（Calculator，macOS 26.6）学到的观测元素常落在「上个表达式」上，
+            // 只在表达式提交时变化，普通按键必然超时；而单次指纹遍历只要 ~10ms。
+            // 所以默认走指纹，需要时用 --observe-watch 显式开启。
+            if args.flag("observe-watch"),
+               let op = hit.entry.observePath, let el = elementAt(pid: s.pid, path: op) {
+                observeEl = el; observePath = op
+            }
+            // 命中路径也要给出坐标：AXPress 不需要它，但 targeted 兜底与光标定位要
+            if let p = axPoint(hit.element, kAXPositionAttribute),
+               let sz = axSize(hit.element, kAXSizeAttribute) {
+                point = CGPoint(x: p.x + sz.width / 2, y: p.y + sz.height / 2)
+            } else {
+                point = CGPoint(x: s.windowFrame.midX, y: s.windowFrame.midY)
+            }
+        } else {
+            expStatus = (useExperience && expStats(app: s.bundleId).entries > 0) ? "miss" : "cold"
+            let snap = walkAX(pid: s.pid, maxDepth: 14, maxNodes: 2000,
+                              includeActions: true, skipMenuBar: true)
+            saveSnapshot(snap)
+            let exact = args.flag("exact")
+            let needle = text.lowercased()
+            let hit = snap.items.first { it in
+                let cands = [it.title, it.value, it.desc, it.identifier].map { $0.lowercased() }
+                return exact ? cands.contains(needle) : cands.joined(separator: " ").contains(needle)
+            }
+            guard let h = hit else {
+                emitError(CUError.noPressableElement, "没找到文本为「\(text)」的元素")
+            }
+            learnRole = h.role
+            learnIdentifier = h.identifier
+            if learnLabel.isEmpty { learnLabel = h.title.isEmpty ? h.desc : h.title }
+            snapBefore = snap
+            if let el = elementAt(pid: s.pid, path: h.path) { preResolved = el; prePath = h.path }
+            guard let pos = h.pos, let sz = h.size else {
+                emitError(CUError.noPressableElement, "元素没有坐标")
+            }
+            point = CGPoint(x: pos.x + sz.width / 2, y: pos.y + sz.height / 2)
         }
-        guard let h = hit, let pos = h.pos, let sz = h.size else {
-            emitError(CUError.noPressableElement, "没找到文本为「\(text)」的元素")
-        }
-        point = CGPoint(x: pos.x + sz.width / 2, y: pos.y + sz.height / 2)
-        targetDesc = ["matchedText": text, "index": h.index, "role": h.role]
+        targetDesc = ["matchedText": text, "experience": expStatus]
     } else {
         point = mousePointFromArgs(args)
         targetDesc = ["x": point.x, "y": point.y]
+        expStatus = "coords"
     }
+    if resolveMs == 0 { resolveMs = msSince(tResolve) }
 
     enforceGuard(pid: s.pid, action: "session click")
-    let res = performAgentAction(global: point, pid: s.pid, windowId: s.windowId,
-                                 windowFrame: s.windowFrame, label: label,
-                                 showCursor: showCursor, verify: verify)
+
+    // ---------- 2) 执行 ----------
+    var opts = ActionOptions()
+    opts.showCursor = showCursor
+    opts.cursorMode = cursorMode
+    opts.verify = verify
+    opts.allowAX = (args.str("mode") ?? "auto") != "targeted"
+    opts.preResolved = preResolved
+    opts.observeElement = observeEl
+    // 观测超时自适应：只在真的要用事件驱动时才去查经验里的失败计数。
+    // （之前无条件查一次，等于命中路径跑了两遍经验查找，反而比不命中更慢。）
+    if observeEl != nil {
+        let prevFail = expLookup(app: s.bundleId, pid: s.pid, intent: "click",
+                                 label: learnLabel)?.entry.observeFail ?? 0
+        opts.observeTimeoutMs = args.int("timeout") ?? (prevFail > 0 ? 150 : 400)
+    }
+    opts.baselineFingerprint = s.lastFingerprint.isEmpty ? nil : s.lastFingerprint
+    let outcome = performAgentAction(global: point, pid: s.pid, windowId: s.windowId,
+                                     windowFrame: s.windowFrame, label: label, options: opts)
+
+    // ---------- 3) 学习 ----------
+    // 写经验的条件：
+    //   a) 界面确实变了 —— 最强证据
+    //   b) AXPress 返回成功但界面无差异 —— 元素找对了（应用接受了语义动作），
+    //      只是这次操作幂等（如重复点「全部清除」）。路径仍然值得记，
+    //      否则幂等按钮永远学不到，每次都退回全树遍历。
+    // 反例（不学）：targeted 兜底成功但界面没变 —— 无法确认点对了地方。
+    let learnedOK = (outcome.changed == true)
+        || (outcome.mode == "ax" && outcome.changed == false)
+    if verify, learnedOK, let path = prePath, !learnLabel.isEmpty {
+        var learnedObserve = observePath
+        if learnedObserve == nil, let before = snapBefore {
+            // 冷启动顺手学会「该盯哪个元素」：下次验证直接监听它
+            let after = walkAX(pid: s.pid, maxDepth: 14, maxNodes: 2000,
+                               includeActions: false, skipMenuBar: true)
+            learnedObserve = detectChangedPath(before: before, after: after)
+        }
+        expLearn(app: s.bundleId, pid: s.pid, intent: "click",
+                 label: learnLabel, role: learnRole, identifier: learnIdentifier,
+                 path: path, element: preResolved ?? appElement(s.pid),
+                 windowFrame: s.windowFrame, actionMode: outcome.mode,
+                 validation: outcome.changed == true
+                     ? (learnedObserve == nil ? "fingerprint" : "axvalue")
+                     : "axpress-only",
+                 observePath: learnedObserve, latencyMs: Int(outcome.timing.total))
+    } else if verify, outcome.changed == false, expStatus.hasPrefix("hit") {
+        expRecordFailure(app: s.bundleId, intent: "click",
+                         label: learnLabel, role: learnRole, identifier: learnIdentifier)
+    }
+
+    if let fp = outcome.fingerprintAfter { s.lastFingerprint = fp }
+    if observeEl != nil, !learnLabel.isEmpty {
+        // 成功观测一次就清零失败计数；连续 3 次才摘掉观测目标
+        expNoteObserve(app: s.bundleId, intent: "click", label: learnLabel,
+                       role: learnRole, identifier: learnIdentifier,
+                       success: !outcome.observeStale)
+    }
     s.actionCount += 1
-    s.lastVerification = (res["verification"] as? String) ?? "not_requested"
+    s.lastVerification = outcome.verification
     saveSession(s)
 
-    var out = res
-    out["session"] = s.id
-    out["target"] = targetDesc
+    var timing = outcome.timing
+    timing.resolve = resolveMs
+    timing.total = msSince(tStart)
+
+    perfLog(["app": s.bundleId, "intent": "click", "label": label,
+             "experience": expStatus, "mode": outcome.mode,
+             "verification": outcome.verification, "via": outcome.via,
+             "resolveMs": timing.resolve, "dispatchMs": timing.dispatch,
+             "verifyMs": timing.verify, "cursorMs": timing.cursor,
+             "totalMs": timing.total])
+
+    var out: [String: Any] = [
+        "ok": true, "session": s.id, "mode": outcome.mode,
+        "target": targetDesc, "verification": outcome.verification,
+        "verifyVia": outcome.via, "experience": expStatus,
+        "timing": timing.dict(),
+        "cursor": outcome.cursorInfo,
+        "targetActivated": NSRunningApplication(processIdentifier: s.pid)?.isActive ?? false,
+        "pointerMoved": false
+    ]
+    if let c = outcome.changed { out["uiChanged"] = c }
     if !gJSONMode {
-        emitText("✅ \(res["mode"] ?? "?") @(\(Int(point.x)),\(Int(point.y)))  verify=\(s.lastVerification)  \((res["elapsedMs"] as? Int) ?? 0)ms")
+        emitText(String(format: "✅ %@ exp=%@ verify=%@ via=%@  %.0fms (定位 %.0f / 投递 %.0f / 验证 %.0f)",
+                        outcome.mode as NSString, expStatus as NSString,
+                        outcome.verification as NSString, outcome.via as NSString,
+                        timing.total, timing.resolve, timing.dispatch, timing.verify))
     } else { emit(out) }
     exit(0)
 }

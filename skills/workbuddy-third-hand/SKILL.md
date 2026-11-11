@@ -70,6 +70,29 @@ wbcu session verify --id $SID --expect "42"
 wbcu session end --id $SID
 ```
 
+## 性能与经验（2.0）
+
+默认就走快路径，不用额外参数：
+
+| 参数 | 默认 | 什么时候改 |
+|---|---|---|
+| `--ghost-mode` | `fast`（先投递，动画并行） | 要给用户看操作过程 → `demo` |
+| 经验复用 | 开 | 界面刚变过、怕旧路径误导 → `--no-experience` |
+| 验证 | 指纹单次扫描 | 想看 AX 通知是否可用 → `--observe-watch` |
+
+熟练后的典型耗时（Calculator，引擎内）：冷启动 ~110ms，命中 ~77ms。
+
+```bash
+# 想证明「越用越快」时，跑这个，别口头说
+wbcu bench --app com.apple.calculator --iters 5 --cold
+wbcu bench --app com.apple.calculator --iters 5
+wbcu perf stats
+```
+
+经验库只能加速**找目标**，不能替代验证。任务结束后可以 `wbcu experience stats`
+看学到了多少条；怀疑学到脏数据时 `wbcu experience clear --app <bundleId>`。
+```
+
 **一次任务只建一个会话，结束必须 `end`。** 忘掉 `end` 会留下状态文件，下次 `session list` 会脏。
 
 ---

@@ -116,6 +116,21 @@ panel.orderFrontRegardless()                         // :231
 | `occlusion-behavior.sh` | **全部通过** | `vis→fully_occluded`（可见比例 0）；`pointVisible=false`；`cursor.suppressed=true` 且 `shown=false`；遮挡下点击仍点中且已验证；遮挡解除后恢复显示 |
 | `ghost-cleanup.sh` | **全部通过** | stop 后 socket 删除、进程退出、屏上无残留覆盖层窗口 |
 
+用经验库里的 `relRect` 反算出计算器「7」按钮的全局坐标 **(654,511)**，然后强制走坐标投递：
+
+| 场景 | 命令 | 结果 | 指纹验证 |
+|---|---|---|---|
+| 前台 | `session click --x 654 --y 511 --mode targeted` | `ok=true method=targeted verify=changed vis=front` | 显示 `7` ✅ |
+| 后台 + 被 Cover 完全遮挡 | 同上 | `ok=true method=targeted verify=changed vis=fully_occluded cursor.suppressed=true` | 显示 `77` ✅ |
+
+这一条同时否掉了 v0.4.1 交接回执第 105 行的记录：
+
+> 坐标投递 `session click --x 88 --y 157 --mode targeted` → `verify=no_observable_change` ❌
+
+`(88,157)` 不是计算器「7」按钮的全局坐标（该按钮实测在 `(654,511)`，窗口 `x=620 y=300 w=230 h=408`，
+按 `relRect=[0.0435, 0.4583, 0.2087, 0.1176]` 换算）。也就是说那条「静默失败」的记录，
+本质是**点错了坐标**，不是引擎投不进去。
+
 ### 4.3 其它
 
 - `tests/unit/run.sh`：selftest **27/27**，源码卫生 6 项全绿
@@ -137,6 +152,8 @@ mode=ax ok=True vis=background  visibilityMs=0.6  totalMs=180.3
 P50 **0.6 ms**。每次动作只调用一次，无后台扫描线程，v0.4.0 的常驻 SCK / 经验库 / 单次验证策略全部保留。
 
 ---
+
+### 4.5 真机复验（系统计算器，非夹具）
 
 ## 5. 前台 / 物理鼠标保持情况
 
@@ -187,9 +204,10 @@ P50 **0.6 ms**。每次动作只调用一次，无后台扫描线程，v0.4.0 �
 ## 8. Git
 
 ```
+(见 git log --oneline -3，标签 v0.4.2 指向最后一次提交)
 c2a031e  fix: 虚拟光标绑定目标窗口 + 投递结果不再静默成功（v0.4.2）
+faec838  docs: v0.4.2 部署回执（供第三方审查）+ 能力矩阵更新
 4a92ff2  docs: v0.4.1 交接回执（供第三方审查）
-77146b5  docs: v0.4.1 部署回执
 b60e9eb  fix: 虚拟光标 daemon 不再抢用户前台（v0.4.1）
 ```
 

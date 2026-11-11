@@ -195,84 +195,137 @@ func ghostHide() { if ghostDaemonAlive() { ghostCall(["op": "hide"], timeoutMs: 
 // 三层协同的唯一入口。任何一层不可用都降级而不是失败：
 //   光标不可用 → 照常投递（只是看不见）
 //   观察不可用 → 照常投递（只是无法验证）
+// MARK: - 动作执行（v2：可控光标模式 + 事件驱动验证 + 分阶段计时）
+
+struct ActionOptions {
+    var showCursor = true
+    /// fast  = 输入优先，动画并行（默认，延迟最低）
+    /// normal= 短动画后投递，兼顾观感
+    /// demo  = 完整动画后再投递，适合录屏/演示
+    var cursorMode = "fast"
+    var verify = true
+    var allowAX = true
+    var preResolved: AXUIElement? = nil      // 经验命中，跳过定位
+    var observeElement: AXUIElement? = nil   // 已知「会变的元素」，走事件驱动验证
+    /// 观测超时。UI 更新通常在 100ms 内；给 400ms 足够，
+    /// 再长就变成「用固定睡眠换安心」，反而不如直接退回指纹对比。
+    var observeTimeoutMs = 400
+    /// 会话里上一次已知的整树指纹。用于「观测元素没变」时的兜底，
+    /// 只扫一次树即可判断「别处有没有变」，比前后各扫一次省一半。
+    var baselineFingerprint: String? = nil
+}
+
+struct ActionOutcome {
+    var mode = "targeted"
+    var escalated = false
+    var axErr = ""
+    var changed: Bool? = nil
+    var verification = "not_requested"
+    var via = ""
+    var timing = StageTiming()
+    var cursorInfo: [String: Any] = ["used": false]
+    /// 本次动作后的整树指纹；调用方存回会话，供下一次做基线
+    var fingerprintAfter: String? = nil
+    /// 观测元素超时（说明这条经验不可靠），调用方应把它从经验里剔掉
+    var observeStale = false
+}
+
 func performAgentAction(global point: CGPoint,
                         pid: pid_t,
                         windowId: CGWindowID,
                         windowFrame: CGRect,
                         label: String,
-                        showCursor: Bool,
-                        verify: Bool,
-                        allowAX: Bool = true) -> [String: Any] {
-    let t0 = Date()
+                        options: ActionOptions) -> ActionOutcome {
+    let tStart = nowNs()
+    var out = ActionOutcome()
     let local = windowLocal(from: point, in: windowFrame)
-    var cursorInfo: [String: Any] = ["used": false]
 
-    // ① 可视化层：动画移动到目标（与投递解耦，失败不影响后续）
-    if showCursor {
+    // ---- ① 定位目标元素 ----
+    var tMark = nowNs()
+    var element = options.preResolved
+    if element == nil, options.allowAX {
+        element = findPressableElement(pid: pid, at: point)
+    }
+    out.timing.resolve = msSince(tMark)
+
+    // ---- ② 光标动画（与输入解耦）----
+    // 关键改动：旧实现先等 260ms 动画再发点击，把「给人看」的成本压进了关键路径。
+    // 现在 fast 模式先投递、动画并行跑，视觉层永远不阻塞执行层。
+    if options.showCursor {
         if let st = ghostGoto(window: windowId, local: local, animated: true, label: label) {
-            cursorInfo = ["used": true, "anchored": st["anchored"] ?? false,
-                          "windowId": st["windowId"] ?? 0, "phase": st["phase"] ?? ""]
-            // 等动画走完（移动时长 0.24s）
-            usleep(260_000)
+            out.cursorInfo = ["used": true, "anchored": st["anchored"] ?? false,
+                              "windowId": st["windowId"] ?? 0, "phase": st["phase"] ?? ""]
         }
+        tMark = nowNs()
+        switch options.cursorMode {
+        case "demo":   usleep(260_000)      // 完整动画
+        case "normal": usleep(90_000)       // 只等个起势
+        default:       break                // fast：不等
+        }
+        out.timing.cursor = msSince(tMark)
     }
 
-    // ② 输入层
-    let fpBefore = verify ? axFingerprint(pid: pid) : ("", 0)
-    var mode = "targeted"
-    var axErr = ""
+    // ---- ③ 投递输入 ----
+    tMark = nowNs()
+    var fpBefore: (String, Int)? = nil
+    if options.verify && options.observeElement == nil {
+        // 只有走指纹兜底时才需要先扫一遍树
+        fpBefore = axFingerprint(pid: pid)
+    }
 
-    if allowAX, let el = findPressableElement(pid: pid, at: point) {
+    if let el = element {
         let r = AXUIElementPerformAction(el, kAXPressAction as CFString)
-        if r == .success { mode = "ax" } else { axErr = axErrorName(r) }
+        if r == .success { out.mode = "ax" } else { out.axErr = axErrorName(r) }
     }
 
-    if showCursor { _ = ghostPress(label) }
-
-    var escalated = false
-    if mode == "ax" {
-        // ⚠️ 只在 AX「失败」时升级，**不在「AX 成功但 UI 没变化」时升级**。
-        //
-        // 原因：AXPress 返回 .success 表示目标应用接受了这个语义动作。此时若因为
-        // 「检测不到变化」再投一次坐标点击，对幂等按钮（全部清除、刷新）无害，
-        // 但对非幂等按钮（复制、+, 发送）就是**重复执行**——这是数据正确性问题，
-        // 不能拿便利性去换。检测不到变化要如实报告，由上层决定是否重试。
-        if verify {
-            usleep(200_000)
-            _ = axFingerprint(pid: pid)  // 只为观察层留痕，不据此升级
-        }
-    } else {
+    if out.mode != "ax" {
         targetedClick(at: point, pid: pid, windowId: windowId,
                       windowFrame: windowFrame, button: "left", clickCount: 1)
+        out.escalated = (!options.allowAX || element == nil) ? false : true
+        out.mode = "targeted"
     }
+    if options.showCursor { _ = ghostPress(label) }
+    out.timing.dispatch = msSince(tMark)
 
-    // ③ 观察层
-    var changed: Bool? = nil
-    if verify {
-        usleep(240_000)
-        changed = axFingerprint(pid: pid).hash != fpBefore.0
+    // ---- ④ 验证 ----
+    // 两级策略：
+    //   ① 已知「会变的元素」→ 盯它（20~60ms）
+    //   ② 没变 / 不知道盯谁 → 整树指纹兜底
+    // 兜底是必须的：只盯一个元素会把「别处变了」误判成「什么都没变」。
+    tMark = nowNs()
+    if options.verify {
+        var resolved = false
+        if let obs = options.observeElement {
+            let w = waitForElementChange(pid: pid, element: obs, timeoutMs: options.observeTimeoutMs)
+            if w.changed {
+                out.changed = true
+                out.via = w.via
+                resolved = true
+            } else {
+                out.via = "observe-timeout"
+                out.observeStale = true
+            }
+        }
+        if !resolved {
+            let after = axFingerprint(pid: pid)
+            out.fingerprintAfter = after.hash
+            if let base = options.baselineFingerprint, !base.isEmpty {
+                out.changed = after.hash != base
+                out.via = out.via == "observe-timeout" ? "observe-timeout+fingerprint" : "fingerprint"
+            } else if let before = fpBefore {
+                out.changed = after.hash != before.0
+                out.via = "fingerprint"
+            }
+        }
+        out.verification = out.changed == nil ? "not_requested"
+            : (out.changed! ? "changed" : "no_observable_change")
     }
+    out.timing.verify = msSince(tMark)
 
-    if showCursor {
-        _ = ghostFeedback(changed ?? true, changed == false ? "no change" : label)
+    if options.showCursor {
+        _ = ghostFeedback(out.changed ?? true, out.changed == false ? "no change" : label)
     }
-
-    var out: [String: Any] = [
-        "ok": true,
-        "mode": mode,
-        "escalatedFromAX": escalated,
-        "axError": axErr,
-        "windowId": Int(windowId),
-        "pid": Int(pid),
-        "global": ["x": point.x, "y": point.y],
-        "windowLocal": ["x": local.x, "y": local.y],
-        "cursor": cursorInfo,
-        "verification": changed == nil ? "not_requested" : (changed! ? "changed" : "no_observable_change"),
-        "elapsedMs": Int(Date().timeIntervalSince(t0) * 1000),
-        "pointerMoved": false,
-        "targetActivated": NSRunningApplication(processIdentifier: pid)?.isActive ?? false
-    ]
-    if verify { out["uiChanged"] = changed! }
+    out.timing.total = msSince(tStart)
     return out
 }
 
@@ -377,15 +430,27 @@ func cmdAct(_ args: Args) {
     }
     enforceGuard(pid: pd, action: "act")
 
-    let res = performAgentAction(global: p, pid: pd, windowId: w, windowFrame: f,
-                                 label: label, showCursor: showCursor, verify: verify, allowAX: allowAX)
+    var opts = ActionOptions()
+    opts.showCursor = showCursor
+    opts.verify = verify
+    opts.allowAX = allowAX
+    opts.cursorMode = (args.str("ghost-mode") ?? "fast").lowercased()
+    let outcome = performAgentAction(global: p, pid: pd, windowId: w, windowFrame: f,
+                                     label: label, options: opts)
+    let loc = windowLocal(from: p, in: f)
+    var res: [String: Any] = [
+        "ok": true, "mode": outcome.mode, "escalatedFromAX": outcome.escalated,
+        "axError": outcome.axErr, "windowId": Int(w), "pid": Int(pd),
+        "global": ["x": p.x, "y": p.y], "windowLocal": ["x": loc.x, "y": loc.y],
+        "cursor": outcome.cursorInfo, "verification": outcome.verification,
+        "verifyVia": outcome.via, "timing": outcome.timing.dict(), "pointerMoved": false
+    ]
+    if let c = outcome.changed { res["uiChanged"] = c }
     if gJSONMode { emit(res) }
     else {
-        let c = (res["cursor"] as? [String: Any])?["used"] as? Bool ?? false
-        emitText("✅ \(res["mode"] ?? "?") @(\(Int(p.x)),\(Int(p.y)))  "
-                 + "cursor=\(c ? "shown" : "off")  "
-                 + "verify=\(res["verification"] ?? "?")  "
-                 + "\((res["elapsedMs"] as? Int) ?? 0)ms")
+        let cur = (outcome.cursorInfo["used"] as? Bool) ?? false
+        emitText("✅ \(outcome.mode) @(\(Int(p.x)),\(Int(p.y)))  cursor=\(cur ? "shown" : "off")  "
+                 + "verify=\(outcome.verification)  \(Int(outcome.timing.total))ms")
     }
     exit(0)
 }

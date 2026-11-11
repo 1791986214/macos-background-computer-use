@@ -5,6 +5,44 @@
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-11
+
+Third Hand 2.0：把固定等待换成测量驱动的优化，并加入应用经验记忆。
+
+### 性能（实测，同一机器同一套动作）
+
+| 版本 | P50 | P95 |
+|---|---|---|
+| 0.3.0 | 995 ms | 1019 ms |
+| 0.4.0 | **108 ms** | **124 ms** |
+
+- 去掉每步 ~700ms 的固定 `usleep`（260 动画 + 200 + 240）
+- 光标动画与输入投递解耦：`--ghost-mode fast|normal|demo`，视觉不再阻塞执行
+- 验证从「前后各扫一次整树」改为「单次扫描 + 会话基线指纹」
+
+### 新增
+- `ThirdHandAppExperienceMemory`（`src/SessionManager/Experience.swift`）
+  - 按 bundleId 索引，记录 AX 路径、身份特征、归一化位置、成功/失败计数、中位延迟
+  - 生命周期 candidate → verified → stable；失败会降级乃至删除
+  - schema 版本化，不匹配时先备份再重建
+- `ThirdHandEventDrivenVerifier`（`src/InputDispatcher/Verify.swift`）
+  - AXObserver + 轻量轮询双通道等待元素变化
+  - 实现保留，**默认关闭**：实测在 Calculator 上为负收益（观测元素选择不可靠，
+    超时 400ms 远大于单次指纹的 10ms），用 `--observe-watch` 显式开启
+- `wbcu experience list|stats|clear`、`wbcu bench`、`wbcu perf stats|reset`
+- `wbcu bench` 内置干扰检测：用 `idle` 判断期间有无人操作，有则标记结论不可用
+- `docs/experience-memory.md`：经验格式、匹配优先级、失效机制、隐私边界
+
+### 修正
+- `detectChangedPath`（学「该盯哪个元素」）原先按路径索引对比两棵树，
+  节点数一变索引整体错位导致全树判定变化，学出垃圾路径 `[0,0,0,0,0,0,0]`；
+  改为按元素身份（role+identifier+title+desc）匹配
+- 经验查找在命中路径上被调用两次（一次用于命中、一次查观测失败计数），
+  导致命中反而比未命中慢；改为仅在启用事件驱动时才查
+- 「观测超时一次就摘掉观测目标」会误杀幂等操作（如重复点「全部清除」），
+  改为连续 3 次失败才摘
+
+
 ## [0.3.0] — 2026-11-10
 
 产品身份从通用的「macOS Background Computer Use」定为 **WorkBuddy Third Hand**

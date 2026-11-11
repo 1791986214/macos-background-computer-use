@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-let VERSION = "0.3.0"
+let VERSION = "0.4.0"
 
 func usage() {
     print("""
@@ -14,10 +14,16 @@ func usage() {
       wbcu session inspect --id SID [--max 200] [--depth 12]
       wbcu session click   --id SID (--x X --y Y | --element N | --text "保存")
                            [--exact] [--label 文案] [--no-ghost] [--no-verify]
+                           [--ghost-mode fast|normal|demo] [--no-experience]
       wbcu session type    --id SID --text "内容" [--element N]
       wbcu session key     --id SID --combo "cmd+a"
       wbcu session cursor  --id SID --x 100 --y 80 [--animate] [--label 点这里]
       wbcu session verify  --id SID [--expect "15"]
+
+    经验与性能（Third Hand 2.0）
+      wbcu experience list|stats|clear [--app X]   应用经验库（AX 路径 + 观测元素）
+      wbcu bench --app X [--iters 5] [--cold]      基准测试：P50/P95、命中率、成功率和零干扰
+      wbcu perf stats|reset                        按冷启动/命中分组对比延迟
 
     能力
       wbcu capabilities [--json]                   能力矩阵与权限、错误码清单
@@ -77,6 +83,9 @@ bootstrapWindowServer()
 switch cmd {
 case "perm": cmdPerm(args)
 case "capabilities": cmdCapabilities(args)
+case "experience": cmdExperience(args)
+case "bench": cmdBench(args)
+case "perf": cmdPerf(args)
 case "selftest": cmdSelfTest(args)
 case "session": cmdSession(args)
 case "guard": cmdGuard(args)

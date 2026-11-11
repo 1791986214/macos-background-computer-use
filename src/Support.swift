@@ -11,7 +11,8 @@ struct Args {
 
     static let boolFlags: Set<String> = [
         "json", "pretty", "recursive", "all", "prompt", "quiet", "verbose",
-        "raw", "no-diff", "deep", "native", "exact", "allow-global", "ghost", "verify"
+        "raw", "no-diff", "deep", "native", "exact", "allow-global", "ghost", "verify",
+        "no-experience", "fast", "all", "observe-watch"
     ]
 
     init(_ argv: [String]) {

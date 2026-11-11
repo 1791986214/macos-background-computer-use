@@ -9,7 +9,7 @@
 | 机器 | MacBook（Apple Silicon, arm64） |
 | macOS | 26.6 (Build 25G72) |
 | 工具链 | CommandLineTools，Swift 6.3.3，编译用 `MacOSX26.5.sdk` |
-| 引擎版本 | 0.2.0 |
+| 引擎版本 | 0.4.2 |
 | 判据 | 目标 UI **实际变化**（读 AX 值），不是命令返回码 |
 | 零干扰判据 | 真实鼠标零位移 + 前台应用不变 + `targetActive == false` + `idle` 探针确认期间无用户输入 |
 
@@ -137,3 +137,46 @@ fixture 见 `tests/integration/Fixture.swift`：同一窗口里放 NSButton / NS
 # 完整矩阵
 ./tests/run-all.sh all
 ```
+
+---
+
+## 六、v0.4.2 投递行为矩阵（受控夹具）
+
+夹具：`tests/integration/build/TestTarget.app`（NSButton / 自绘 CanvasView / WKWebView 按钮）。
+遮挡：`tests/integration/build/Cover.app`（另一个 App，窗口可摆到任意位置）。
+判据：目标 UI **实际变化**（`state.json` 的计数），不是返回码。
+
+| 用例 | 目标状态 | 投递方式 | 控件 | UI 真的变了 |
+|---|---|---|---|---|
+| E1 | 前台 | 51+58+窗口局部坐标 | NSButton | ✅ |
+| E2 | 后台不遮挡 | 同上 | NSButton | ✅ |
+| E3 | 后台且完全遮挡 | 同上 | NSButton | ✅ |
+| E4 | 后台且完全遮挡 | AXPress | NSButton | ✅ |
+| E5 | 后台不遮挡 | 坐标投递 | 自绘 Canvas | ✅ |
+| E6 | 被遮挡 + AX 设 main/focused | 坐标投递 | NSButton | ✅ |
+| E7 | 被遮挡 | 坐标投递 | 自绘 Canvas | ✅ |
+| E8 | 被遮挡 | 坐标投递 | WKWebView 按钮 | ✅ |
+| E9 | 被遮挡 | AXPress | WKWebView 按钮 | ❌ `-25206`（无 AXPress） |
+
+结论：
+
+- **坐标投递对遮挡免疫**。事件直接进目标进程事件队列，由字段 51 决定落到哪个窗口，
+  不经过系统级 hit-test，因此不会被挡在前面的窗口截走。
+- **AXPress 不是万能的**。Web 内容常常没有 `AXPress`（E9），必须有坐标投递兜底。
+- **两者都不能省**，且唯一可信的判据是「UI 是否真的变了」。
+
+### 光标可见性
+
+| 场景 | 光标 | 判定字段 |
+|---|---|---|
+| 目标前台、点可见 | 显示（126×126 小窗跟随） | `cursor.suppressed=false` |
+| 目标后台但点可见 | 显示（样式弱化） | `cursor.background=true` |
+| 点被其它窗口盖住 | **整窗隐藏** | `cursor.suppressed=true`、`shown=false` |
+| 目标最小化 / 不在当前 Space | **整窗隐藏** | `vis→minimized / off_screen` |
+| 空闲 1.8s | 自动隐藏 | `shown=false` |
+
+### 未验证（Not Tested）
+
+- 其它 Space 的窗口、副屏负坐标、屏幕拼接
+- Metal / 游戏 / 远程桌面类自绘窗口的坐标投递
+- 投递对 key window 与键盘焦点的影响

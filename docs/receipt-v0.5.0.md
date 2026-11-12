@@ -207,13 +207,20 @@ WorkBuddy Agent
 
 ## 10. Git、版本与维护
 
-### 10.1 当前实际状态（2026-11-12 15:50 核验）
+### 10.1 当前实际状态（2026-11-12 核验）
+
+> 这里不写死「main = 某个 SHA」——每提交一次它就变，写死必然过期。
+> 要取当前值，跑下面两条命令即可。
+
+```bash
+git -C /Users/lang/WorkBuddy/macos-background-computer-use log --oneline -1        # 当前 main 顶端
+git -C /Users/lang/WorkBuddy/macos-background-computer-use rev-parse --short 'v0.5.0^{}'  # 标签指向
+```
 
 | 项 | 值 |
 |---|---|
-| 远端 `main` | `880869a`（代码合并点 `17a0d4c` = PR #6；其后只有回执文档提交） |
-| 本地 `main` | `880869a`（与远端一致，工作区干净） |
-| 标签 `v0.5.0` | `880869a`（已推送，轻量标签，与 main 同点） |
+| 代码合并点（稳定锚点） | `17a0d4c` —— PR #6 合入点，含 v0.4.2 → v0.4.3 审计 → v0.5.0 全部代码 |
+| 标签 `v0.5.0` | 已推送，指向 main 顶端（轻量标签，与历史 v0.3/v0.4.x 一致） |
 | 标签 `v0.4.2` | `5f9081e`（本次补推；之前只存在于本地） |
 | 已安装二进制 | `~/.local/bin/wbcu` = **0.5.0**，sha256 前缀 `afd4e5b96366580a` |
 | 已安装技能 | `~/.workbuddy/skills/workbuddy-third-hand/SKILL.md` = **231 行**（含 v0.5.0 路由） |

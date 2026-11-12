@@ -211,9 +211,9 @@ WorkBuddy Agent
 
 | 项 | 值 |
 |---|---|
-| 远端 `main` | `17a0d4c`（PR #6 已合并） |
-| 本地 `main` | `17a0d4c`（一致，工作区干净） |
-| 标签 `v0.5.0` | `17a0d4c`（已推送，轻量标签） |
+| 远端 `main` | `880869a`（代码合并点 `17a0d4c` = PR #6；其后只有回执文档提交） |
+| 本地 `main` | `880869a`（与远端一致，工作区干净） |
+| 标签 `v0.5.0` | `880869a`（已推送，轻量标签，与 main 同点） |
 | 标签 `v0.4.2` | `5f9081e`（本次补推；之前只存在于本地） |
 | 已安装二进制 | `~/.local/bin/wbcu` = **0.5.0**，sha256 前缀 `afd4e5b96366580a` |
 | 已安装技能 | `~/.workbuddy/skills/workbuddy-third-hand/SKILL.md` = **231 行**（含 v0.5.0 路由） |
@@ -245,7 +245,7 @@ cd /Users/lang/WorkBuddy/macos-background-computer-use && bash scripts/install.s
 
 ```bash
 git checkout v0.4.2 && bash scripts/install.sh --skill   # 回到 v0.4.2 行为
-git revert 17a0d4c                                     # 撤掉合并
+git revert -m 1 17a0d4c                                # 撤掉那次合并
 ```
 
 ### 10.4 后续维护要点

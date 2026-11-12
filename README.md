@@ -163,6 +163,61 @@ Observe → Locate → Choose Action → Execute → Verify
 
 ---
 
+## 🔒 不抢前台：证据，不是口号（v0.5.0）
+
+「每一步都把窗口重新带到前台」这个问题，靠口头保证解决不了。这一版的做法是：**先能证明，再修**。
+
+### 1. 被动激活追踪（`wbcu trace`）
+
+监听系统激活通知（事件驱动，不轮询），每条 wbcu 命令写一对开始/结束时间戳，
+于是每次前台变化都能被归因：
+
+| 归因 | 判据 | 含义 |
+|---|---|---|
+| `user` | 400ms 内有真实硬件输入 | 用户自己切的 |
+| `wbcu` | 落在某条命令的运行窗口内 | **引擎的锅** |
+| `external` | 都不是 | 典型是 Agent 跑了 `open -a` / `osascript activate` |
+| `harness` | 测试脚手架主动登记 | 不算任何一方 |
+
+```bash
+wbcu trace start
+# ... 跑任务 ...
+wbcu trace report
+# ⚠️ 14:57:03.421  WorkBuddy → 计算器  [wbcu]  cmd=session click(+88ms)
+```
+
+### 2. 两个具体的抢前台来源，都堵住了
+
+| 来源 | 修法 | 实测 |
+|---|---|---|
+| `open -a Calculator`（Agent 最自然的写法） | `wbcu launch`：`activates=false`，已在运行则什么都不做 | 前台变化 1 次 → **0 次** |
+| 每步重新 `session start` → 重新拉窗口 | 同 App 活会话自动复用；`--app` 直接寻址 | 190ms → **94ms**，且不再重复初始化 |
+
+### 3. 一次真实的后台任务（测试 A）
+
+用户前台是 Safari，Third Hand 在后台算 `125×8`：
+
+```
+✅ 后台启动成功且未激活（activated=false）
+✅ 同一 App 复用同一会话，没有重复初始化
+✅ 7/7 步验证通过，最终读数 1,000
+✅ 计算全程前台停在 Safari
+✅ 0 次前台变化归因于 wbcu 命令
+```
+
+### 4. 网页交给谁
+
+本构建**没有**给 Agent 暴露浏览器自动化接口，所以：
+
+| 目标 | 工具 |
+|---|---|
+| 网页内容读取 / 搜索 | `WebFetch` / `WebSearch` |
+| 页面展示 | `present_files`（内置右侧面板） |
+| 网页内点击 / 输入 | **不可用** —— 且不得用坐标点击冒充 |
+| 原生应用 | Third Hand |
+
+调查方法与全部证据：[`docs/browser-use.md`](docs/browser-use.md)。
+
 ## 🏗️ 工作原理
 
 ```text
@@ -359,6 +414,38 @@ wbcu guard --app com.apple.calculator --allow     # 按应用授权（第二道�
 完整说明（含 TCC 归因到「责任进程」这个坑）：[`docs/permissions.md`](docs/permissions.md)。
 升级 / 卸载 / 换机恢复：[`docs/installation.md`](docs/installation.md)。
 
+## 🎯 怎么证明「点对了」（v0.4.3）
+
+「UI 变了」不等于「做对了」。每个动作可以带一个**期望状态**，引擎按四分类给结论：
+
+| 结论 | 含义 | 置信度 |
+|---|---|---|
+| `success` | 确认产生了预期结果 | .95 |
+| `already_satisfied` | 操作前就已满足（幂等） | .60（不声称点击被消费） |
+| `failure` | 结果与期望不一致 | .95 |
+| `inconclusive` | 证据不足（读不到状态 / 没给期望） | .30 |
+
+```bash
+wbcu session click --id $SID --text "7" --exact \
+  --expect 7 --expect-el role:AXStaticText
+# → result=success  expected="7"  actual="7"  confidence=0.95
+```
+
+真机实测（Calculator）：点 7 期望 7 → `success`；点 8 期望 7 → `failure`（能抓到误点）；
+幂等「全部清除」→ `already_satisfied`。细节：[`docs/receipt-v0.4.3.md`](docs/receipt-v0.4.3.md)。
+
+## 🧵 用户在用电脑时还成不成立（v0.4.3）
+
+`tests/concurrency/` 用 listen-only 事件 tap 记录用户真实输入，再对每次前台变化做**责任归因**
+（前 0.4s 内有用户输入 → 用户；脚本登记 → harness；否则 → Agent）：
+
+| 场景 | 用户输入事件 | Agent 动作 | 归因 Agent | 会话流合成事件 |
+|---|---|---|---|---|
+| AX 优先 | 968 条 | 8/8 | **0** | 0 |
+| 强制坐标投递 + 中途切前台 | 977 条 | 8/8 | **0** | 0 |
+
+没有真实用户输入时，这条测试记 `Not Tested`，不给「通过」。
+
 ## ⚡ 性能与经验记忆（2.0）
 
 ### 同一台机器、同一套动作的 A/B
@@ -368,9 +455,12 @@ Calculator，同样 5 步操作 × 6 轮 = 30 次点击，端到端墙钟（含�
 | 版本 | P50 | P95 | 做法 |
 |---|---|---|---|
 | v0.3.0 | 995 ms | 1019 ms | 每步固定 `usleep` 700ms，每次全树遍历两次 |
-| **v0.4.0** | **108 ms** | **124 ms** | 去掉固定睡眠、光标解耦、经验命中、单次验证 |
+| v0.4.0 | 108 ms | 124 ms | 去掉固定睡眠、光标解耦、经验命中、单次验证 |
+| **v0.4.3** | **73.9 ms** | **85.4 ms** | 焦点取证按需、有期望时不扫整树、光标反馈出计时 |
 
-**P50 −89%，P95 −88%。**
+**相对 v0.3.0：P50 −93%，P95 −92%。**
+v0.4.3 在加了「期望状态验证 + 可见性判定」之后仍然更快 ——
+关键是把不属于输入的成本（焦点取证 54ms、整树指纹 60~90ms、光标 socket 往返 70ms）移出关键路径。
 
 ### 时间到底花在哪（先测再改）
 

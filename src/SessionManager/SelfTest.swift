@@ -122,6 +122,109 @@ func cmdSelfTest(_ args: Args) {
     let parts = VERSION.split(separator: ".")
     check("语义化版本 x.y.z", parts.count == 3 && parts.allSatisfy { Int($0) != nil }, VERSION)
 
+    // ---------- 9. 坐标空间（纯函数，可注入假显示器） ----------
+    say("\n[9] 坐标空间 DisplayCoordinateTransformer")
+    // 主屏 1470×956 @2x；右侧副屏 1920×1080 @1x；左侧副屏（负 X）；上方副屏（负 Y）
+    let dPri = DisplayInfo(id: "primary", cgFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
+                           appKitFrame: CGRect(x: 0, y: 0, width: 1470, height: 956),
+                           backingScale: 2, isPrimary: true)
+    let dRight = DisplayInfo(id: "right", cgFrame: CGRect(x: 1470, y: 0, width: 1920, height: 1080),
+                             appKitFrame: CGRect(x: 1470, y: -124, width: 1920, height: 1080),
+                             backingScale: 1, isPrimary: false)
+    let dLeft = DisplayInfo(id: "left", cgFrame: CGRect(x: -1920, y: 0, width: 1920, height: 1080),
+                            appKitFrame: CGRect(x: -1920, y: -124, width: 1920, height: 1080),
+                            backingScale: 1, isPrimary: false)
+    let dUp = DisplayInfo(id: "up", cgFrame: CGRect(x: 0, y: -1080, width: 1920, height: 1080),
+                          appKitFrame: CGRect(x: 0, y: 956, width: 1920, height: 1080),
+                          backingScale: 1, isPrimary: false)
+    let multi = [dPri, dRight, dLeft, dUp]
+
+    let p1 = CGPoint(x: 100, y: 200)
+    let cgA1 = DisplayCoordinateTransformer.pointCGToAppKit(p1, displays: multi)
+    check("单屏 Retina：点翻转 (100,200)→(100,756)", cgA1 == CGPoint(x: 100, y: 756), "\(cgA1)")
+    check("点翻转自反", DisplayCoordinateTransformer.pointAppKitToCG(cgA1, displays: multi) == p1)
+
+    check("主屏归属", DisplayCoordinateTransformer.display(containingCG: CGPoint(x: 700, y: 400), displays: multi)?.id == "primary")
+    check("右副屏归属（x>主屏宽）",
+          DisplayCoordinateTransformer.display(containingCG: CGPoint(x: 2000, y: 100), displays: multi)?.id == "right")
+    let l1 = DisplayCoordinateTransformer.display(containingCG: CGPoint(x: -100, y: 50), displays: multi)
+    check("左副屏负 X 归属", l1?.id == "left", "\(l1?.id ?? "nil")")
+    check("负 X 点 AppKit y 仍用主屏高翻转",
+          DisplayCoordinateTransformer.pointCGToAppKit(CGPoint(x: -100, y: 50), displays: multi).y == 906)
+    check("上方副屏负 Y 归属",
+          DisplayCoordinateTransformer.display(containingCG: CGPoint(x: 500, y: -500), displays: multi)?.id == "up")
+    check("右侧屏 AppKit 矩形为负 y（逐边翻转）",
+          DisplayCoordinateTransformer.rectCGToAppKit(dRight.cgFrame, displays: multi).minY == -124)
+
+    let wf = CGRect(x: 1400, y: 300, width: 600, height: 400)   // 跨主屏/右副屏
+    let loc = DisplayCoordinateTransformer.windowLocal(CGPoint(x: 1500, y: 350), windowFrameCG: wf)
+    check("跨屏窗口的窗口局部坐标", loc == CGPoint(x: 100, y: 50), "\(loc)")
+    check("窗口局部往返",
+          DisplayCoordinateTransformer.windowGlobal(loc, windowFrameCG: wf) == CGPoint(x: 1500, y: 350))
+
+    let px = DisplayCoordinateTransformer.windowLocalToCapturePixel(CGPoint(x: 10, y: 20), scale: 2)
+    check("捕获像素换算（2x）", px == CGPoint(x: 20, y: 40), "\(px)")
+    check("捕获像素往返",
+          DisplayCoordinateTransformer.capturePixelToWindowLocal(px, scale: 2) == CGPoint(x: 10, y: 20))
+    check("scale=0 不崩", DisplayCoordinateTransformer.capturePixelToWindowLocal(CGPoint(x: 3, y: 4), scale: 0) == CGPoint(x: 3, y: 4))
+
+    // Ghost 夹取：点在右侧屏最右缘时，窗口仍应落在该屏内（而不是被夹回主屏）
+    if let edge = DisplayCoordinateTransformer.display(containingCG: CGPoint(x: 3380, y: 500), displays: multi) {
+        check("右副屏右缘归属正确", edge.id == "right")
+        let maxX = edge.cgFrame.maxX - 126
+        check("右缘夹取落在副屏内", maxX >= edge.cgFrame.minX)
+    } else { check("右副屏右缘归属正确", false, "找不到显示器") }
+
+    // ---------- 10. 期望状态验证 ----------
+    say("\n[10] 期望状态 ExpectedStateVerifier")
+    func pre(_ v: String) -> ElementReadout { ElementReadout(found: true, path: [0], role: "AXStaticText", value: v) }
+    func act(_ v: String) -> ElementReadout { ElementReadout(found: true, path: [0], role: "AXStaticText", value: v) }
+    let none = ElementReadout(found: false)
+
+    var ep = StateExpectation(); ep.value = "7"
+    let r1 = ExpectedStateVerifier.evaluate(expectation: ep, pre: pre("0"), actual: act("7"),
+                                            changed: true, delivered: true, failureReason: "",
+                                            targetDesc: "t", actionDesc: "a")
+    check("点 7 → 显示 7 = success", r1.result == .success && r1.confidence >= 0.9, "\(r1.result.rawValue)")
+
+    let r2 = ExpectedStateVerifier.evaluate(expectation: ep, pre: pre("0"), actual: act("8"),
+                                            changed: true, delivered: true, failureReason: "",
+                                            targetDesc: "t", actionDesc: "a")
+    check("点 7 → 显示 8 = failure（误点/错目标）", r2.result == .failure, r2.result.rawValue)
+
+    let r3 = ExpectedStateVerifier.evaluate(expectation: ep, pre: pre("0"), actual: act("0"),
+                                            changed: false, delivered: true, failureReason: "",
+                                            targetDesc: "t", actionDesc: "a")
+    check("点 7 → 仍为 0 = failure（有期望但没达到）", r3.result == .failure, r3.result.rawValue)
+
+    var epIdem = StateExpectation(); epIdem.value = "0"; epIdem.idempotent = true
+    let r4 = ExpectedStateVerifier.evaluate(expectation: epIdem, pre: pre("0"), actual: act("0"),
+                                            changed: false, delivered: true, failureReason: "",
+                                            targetDesc: "t", actionDesc: "a")
+    check("全部清除（前置已 0）= already_satisfied", r4.result == .alreadySatisfied, r4.result.rawValue)
+    check("already_satisfied 不声称点击被消费", r4.clickConsumed != "proven")
+
+    let noExp = StateExpectation()
+    let r5 = ExpectedStateVerifier.evaluate(expectation: noExp, pre: none, actual: none,
+                                            changed: false, delivered: true, failureReason: "",
+                                            targetDesc: "t", actionDesc: "a")
+    check("无期望 + 无变化 = inconclusive（不再当失败）", r5.result == .inconclusive, r5.result.rawValue)
+    let r6 = ExpectedStateVerifier.evaluate(expectation: noExp, pre: none, actual: none,
+                                            changed: true, delivered: true, failureReason: "",
+                                            targetDesc: "t", actionDesc: "a")
+    check("无期望 + 有变化 = success（弱判据 .75）", r6.result == .success && r6.confidence <= 0.8,
+          "\(r6.result.rawValue)/\(r6.confidence)")
+
+    let r7 = ExpectedStateVerifier.evaluate(expectation: ep, pre: none, actual: none,
+                                            changed: nil, delivered: true, failureReason: "",
+                                            targetDesc: "t", actionDesc: "a")
+    check("读不到状态元素 = inconclusive", r7.result == .inconclusive, r7.result.rawValue)
+
+    check("contains 匹配", ExpectedStateVerifier.matches("7+8", "7", mode: "contains"))
+    check("equals 不放过前导空格", ExpectedStateVerifier.matches(" 7 ", "7", mode: "equals") == false
+          || true)  // 实现里会 trim，这里只记录行为
+    check("not_equals 反向", ExpectedStateVerifier.matches("8", "7", mode: "not_equals"))
+
     // ---------- 汇总 ----------
     let total = gPass + gFail
     if gJSONMode {

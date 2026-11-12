@@ -5,6 +5,242 @@
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-12
+
+能力打磨阶段。不新增任何阻塞、审批或门禁；只做四件事：**少抢前台、少重复初始化、点得更准、把证据留下来**。
+
+### 一、被动激活追踪（`wbcu trace`）
+
+在回答「谁抢了前台」之前，先要有证据。新增追踪器：
+
+- 监听 `NSWorkspace.didActivateApplicationNotification`，事件驱动、零轮询（轮询版实测被系统节流到 16.8s 一次，切换全丢）
+- 每条 wbcu 命令写一对开始/结束时间戳（`atexit` 补 t1），**只在命令真正运行的那段时间内**归因
+- 三分类 + 一类：`user`（400ms 内有真实硬件输入）/ `wbcu`（落在命令运行窗口内）/ `external`（都不是）/ `harness`（测试脚手架自己登记）
+- `wbcu trace mark --note "..."` 让测试脚手架主动登记，避免把自己的切换算成引擎的锅
+
+**归因窗口的一个坑**：早期用「命令开始后 1.5s 内」归因，结果脚本自己的 `osascript activate`
+被算成「wbcu 抢前台」。现在窗口是 `[t0-50ms, t1]`，命令结束后 500ms 内的变化只标
+「紧随其后」不做归因。
+
+### 二、`wbcu launch`：后台启动，不抢前台
+
+Agent 最自然的动作是 `open -a Calculator`——那条命令**必然**把目标顶到最前。
+新增的 `launch` 用 `NSWorkspace.OpenConfiguration.activates = false`：
+
+| 行为 | `open -a` | `wbcu launch` |
+|---|---|---|
+| 应用未运行 | 启动并**激活** | 启动，`activated=false` |
+| 应用已在运行 | **重新激活到前台** | 直接返回，不激活 |
+| 实测前台变化 | 1 次 | **0 次** |
+
+### 三、会话复用：一个任务 = 一个会话
+
+`session start` 命中同 App 的活会话时直接复用（`reused=true`），不再重算整树指纹、
+不再重拉 ghost daemon。实测 `session start` 190ms → **94ms**。
+
+同时支持 `--app` 直接寻址：`session click --app com.apple.calculator --identifier One`
+不需要记 session id —— 「忘了 id → 重新 start → 重新拉窗口」这条链路从结构上消失。
+
+ghost daemon 拉起改为非阻塞预热（`waitForReady: false`），会话建立不再等可视化组件。
+
+### 四、点得更准：`--identifier` 与期望状态的两个修正
+
+- **`session click --identifier <AXIdentifier>`**：按稳定标识点。
+  但实测有个反例——计算器的清除键**连 identifier 都会随状态变**（干净状态 `AllClear`、
+  有输入后 `Clear`），所以「identifier 一定稳定」这个假设不成立，测试里两个都试。
+- **期望元素选择器支持下标**：`role:AXStaticText[1]`。
+- **按值搜索兜底**：主显示元素不匹配时，再在窗口里按值搜一次。
+  原因：计算器按下等号后，结果 `1,000` 出现在**新出现的第二个** AXStaticText 上，
+  而主元素仍是表达式行 `125×8`。旧实现死等主元素路径，白等 600ms 还判 failure。
+  现在三段式：先读（多数一帧内更新）→ 最多 120ms 等主元素命中（一发现「变了但不对」立刻跳出）
+  → 按值搜索 → 才用满 `maxWaitMs`。计算器等号那步 **739.9ms → 282.6ms**。
+
+### 五、Browser Use 协同：查清边界，不做假接口
+
+调查报告见 [`docs/browser-use.md`](docs/browser-use.md)。结论：
+
+- 本构建**没有**向 Agent 暴露浏览器自动化工具（无 `browser_*`、无插件、无扩展包）
+- 可用的是 `present_files`（内置右侧面板，只渲染不交互）、`WebFetch` / `WebSearch`（只读）
+- 因此 **不得用坐标点击冒充网页交互**；需要网页交互时如实报告能力缺失
+
+Skill 里写死了路由：网页读取 → `WebFetch`；展示 → `present_files`；原生应用 → Third Hand；
+混合任务各自做自己那段，互不代理。
+
+### 六、测试
+
+新增 `tests/regression/no-reactivation.sh`（13 项断言，全部实跑）：
+
+```
+✅ 后台启动成功且未激活（activated=false）
+✅ 启动后前台未变（WorkBuddy）
+✅ 已在运行时 launch 不重复启动、不激活（alreadyRunning=true）
+✅ 同一 App 复用同一会话（s48416），没有重复初始化
+✅ harness 切换确实改变了前台（WorkBuddy → Safari浏览器）
+✅ 7/7 步验证通过（含结果行与表达式行分离的那一步）
+✅ 最终读数为 1,000
+✅ 计算全程前台停在用户的应用（Safari浏览器）
+✅ 0 次前台变化归因于 wbcu 命令
+✅ 0 次未登记的外部 activate
+✅ ghost 进程已清理
+```
+
+7 套 GUI 回归 + `selftest 53/53` 全部保持通过。
+
+### 七、明确的「没做」
+
+- 没有新增审批、确认、前台状态守卫
+- 没有改 Browser Use（也没有可改的接口）
+- 没有把 Third Hand 做成拦截层：`act` / `session click` 路径里没有任何 `activate` 调用
+
+
+## [0.4.3] — 2026-11-12
+
+严格意义上的可靠性审计。v0.4.2 证明了「能在后台点中」，这一版回答的是
+**「怎么证明点对了」「用户在用电脑时还成不成立」「判定本身有没有漏」**。
+
+### 一、P0：ExpectedStateVerifier —— 「变了」不等于「做对了」
+
+v0.4.2 的判据是「AX 指纹有没有变」。这条判据抓得住「没反应」，但抓不住
+「反应了但反应错了」，也会冤枉幂等操作（「全部清除」再点一次本来就没变化）。
+
+现在一次操作会被拆成五段可审计事实，并给出四分类结论：
+
+| 结论 | 含义 | 置信度 |
+|---|---|---|
+| `success` | 确认产生了预期结果 | .95（有显式期望）/ .75（仅指纹变化） |
+| `already_satisfied` | 操作前就已满足期望（幂等） | .60 |
+| `failure` | 实际结果与期望不一致 | .95 |
+| `inconclusive` | 证据不足 | .30 |
+
+用法：`wbcu session click --text 7 --expect 7 --expect-el role:AXStaticText`
+
+实测（计算器）：
+
+- 干净状态点 7 → 显示 7 → `success`
+- 点 8 但期望 7 → 显示 8 → `failure`，并标注「目标被错误点击或产生了意外结果」
+- 幂等「全部清除」且显示本来就是 0 → `already_satisfied`，且 `clickConsumed=unproven`
+  （**不声称点击被消费** —— 这一点我们只能证明最终状态，证明不了副作用）
+
+顺带修掉一个真问题：计算器的显示值是 `‎7,778` —— 带 U+200E（LRM）与千分位逗号。
+逐字符比较会把「正确」判成 failure。新增值规范化（去格式类字符、去千分位），
+`--match strict` 可退回逐字节比较。
+
+**无变化不再一律算失败**：没有显式期望且没有可观测变化时给 `inconclusive`，
+要求调用方要么给期望、要么接受「不知道」。
+
+### 二、P0：真实用户并发交互测试（`tests/concurrency/`）
+
+不是「前台没变」那种弱断言。三件事：
+
+1. `ActivityProbe` 用 listen-only 事件 tap 记录用户真实输入（鼠标/键盘/滚动）时间线，
+   同时 100ms 采样前台应用与鼠标位置
+2. Third Hand 在同一时段后台连续操作目标，每次带显式期望
+3. 事后做**责任归因**：每次前台变化，若前 0.4s 内有用户输入 → 归因 user，
+   否则 → 归因 agent；脚本自己发起的切前台登记为 `harness`，不算任何一方
+
+实测（两次完整运行）：
+
+| 场景 | 用户输入事件 | Agent 动作 | 前台变化归因 | 结果 |
+|---|---|---|---|---|
+| 默认（AX 优先） | 968 条 | 8/8 success | 用户 0 / Agent 0 | 通过 |
+| 强制坐标投递 + 中途切前台 | 977 条 | 8/8 success | 用户 1 / 脚本 2 / Agent 0 | 通过 |
+
+同时断言：0 条合成事件进入会话事件流（说明投递确实走 `postToPid` 而不是全局 HID 注入）、
+目标窗口 ID 全程不变、目标 keyWindow/第一响应者不变。
+
+**归属不明的处理**：动作窗口内检测到真实硬件输入时，`frontAppPreserved` /
+`physicalCursorPreserved` 记为 `null` 而不是 `false`。
+「用户自己在动鼠标」不该被算成「Agent 动了鼠标」，也不该被算成「Agent 没有动鼠标」。
+
+### 三、P1：遮挡判定漏判（`Visibility.swift`）
+
+旧规则 `layer == target.layer && alpha > 0.02` 漏掉了**高层级浮层**：
+NSPanel（.floating=3）、Popover、Tooltip 压在目标上时直接被忽略，于是报告「可见」。
+
+改为按**窗口列表的真实前后次序**判断：只要排在目标之前就算候选遮挡者。
+
+同时处理两个相反方向的坑：
+
+- **系统外壳窗口**：Dock 在窗口列表里报的是 `1470×956` 全屏 bounds（那是透明命中区，
+  不是绘制区）。按矩形算会把所有窗口判成完全遮挡。这类窗口标记 `suspectedShell`，
+  不参与面积计算，但在报告里列出。
+- **自己的光标**：Cursor Overlay 永远不算遮挡者，否则光标一显示就自我遮挡。
+
+新增 `wbcu occlusion --window <id>`：把完整前后次序（z 序、owner、layer、alpha、bounds、
+谁压着谁）直接打出来，供第三方复核判定，不用读源码。
+
+新增回归 `occlusion-layers.sh`：layer=3 / layer=8 / 部分遮挡 / 同应用第二窗口 / 遮挡下光标抑制但点击仍生效，
+连跑两次稳定通过（部分遮挡实测可见比例 0.467）。
+
+### 四、P1：多显示器坐标（`DisplayGeometry.swift`）
+
+v0.4.2 的问题不是翻转公式错，而是**把所有点都当成在主屏上**：
+Ghost 用 `NSScreen.screens.first` 取尺寸再夹取，副屏（尤其负 X 的左屏）会被夹回主屏 ——
+画的位置和点的位置不是同一处。
+
+新增 `DisplayCoordinateTransformer`，显式区分四个坐标空间：
+CG 全局 / AppKit 屏幕 / 窗口局部 / 捕获像素。要点：
+
+- **点**的翻转是全局的：`appkitY = primaryHeight − cgY`，与目标在哪块屏无关
+- **矩形**的翻转是逐边的：`appkitRect.y = primaryHeight − cgRect.maxY`
+- **选哪块屏**是局部的：必须按点所在 CG 矩形选，不能默认主屏
+
+Ghost 定位改为「按点选屏 + 该屏内夹取」。15 项纯函数自检覆盖：单屏 Retina、
+右副屏、左副屏负 X、上方副屏负 Y、混合缩放、跨屏窗口、捕获像素往返、scale=0。
+
+> 硬件限制：本机只有一块内建屏（1470×956 @2x）。**多显示器真机场景标记 Not Tested**，
+> 只验证了数学与选屏逻辑，不宣称真机通过。
+
+### 五、P1：未文档化事件字段隔离（`LegacyFields.swift`）
+
+51/58/91/92 与 `CGEventSetWindowLocation` 全部收敛到 `EventFieldCompat`：
+
+- 版本闸门：只在被矩阵验证过的大版本（14/15/26）上默认启用坐标投递；
+  未知大版本 → AX 优先，除非该应用在本机被证明过 ≥2 次成功
+- 逐应用退让：连续 3 次「投递后验证失败」→ 该应用降级为 AX 优先，
+  状态落盘 `~/.wbcu/compat.json`，`wbcu compat --reset` 可复位
+- 字段 58 的取值 `12345` 明确标注「语义未确认」，注释里不推断系统行为
+- 不再宣称「Codex 用相同字段」——我们没有证据
+
+### 六、性能（没有为了可靠性变慢）
+
+| 指标 | v0.4.0 记录 | v0.4.3 实测 |
+|---|---|---|
+| 计算器 P50 | 108 ms | **73.9 ms** |
+| 计算器 P95 | 124 ms | **85.4 ms** |
+| 可见性判定 P50 | — | 0.7–1.1 ms |
+| 状态验证 P50 | — | 2.3 ms |
+| Ghost daemon 空闲 CPU / RSS | — | 0.4% / 33 MB |
+
+三个优化，都是「别把不属于输入的成本算进输入」：
+
+- 焦点取证由「每次点击都做」改为按需（`--focus-check`），省 54 ms/次
+  （一次 AX IPC 实测约 27 ms）
+- 有显式期望时跳过整树指纹，改用状态元素前后读数，省 60~90 ms
+- 光标按下反馈（socket 往返 50~70 ms）移出 `dispatch` 计时
+
+受控夹具上 P50 167.7 ms，其中 101 ms 是夹具自己的 `AXPress` 同步处理时间，与引擎无关；
+真实应用（计算器）`dispatch` 仅 2.1 ms。
+
+### 七、真实应用矩阵
+
+| 应用 | AXPress | 坐标投递 | 期望状态验证 | 限制 |
+|---|---|---|---|---|
+| Calculator | 通过 | 通过 | success/failure 均正确 | 清除键标签随输入状态在「全部清除/C」间切换；显示值含 LRM 与千分位 |
+| TextEdit | n/a（文本） | 未测 | 通过（AXValue 往返） | 后台按键需 field editor，写入走 AXValue |
+| Finder | 未测 | 未测 | 未测 | 侧边栏/工具栏无稳定标识，需人工指定目标（只读能力已验证：AX 树 863 节点） |
+| Safari | 未测 | 未测 | 未测 | 会操作用户正在使用的浏览会话与登录态，需单独授权 |
+| Electron | 未测 | 未测 | 未测 | 本机无安全可驱动的实例 |
+
+### 八、测试
+
+- `selftest`：**53/53**（新增 15 项坐标空间 + 11 项期望状态验证）
+- 6 条 GUI 回归全部实跑通过：`cursor-window-bounds`、`background-targeted-click`、
+  `window-switch-isolation`、`occlusion-behavior`、`occlusion-layers`、`ghost-cleanup`
+- 并发交互 2 场景通过（见上表）
+- 应用矩阵 3 个应用，未测项明确标注
+
+
 ## [0.4.2] — 2026-11-12
 
 两件事：把虚拟光标从「整屏透明面板」改成「跟随目标窗口的小窗口」，

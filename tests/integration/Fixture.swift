@@ -241,6 +241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     let webBridge = WebBridge()
     var webView: WKWebView!
     var targets: [String: NSView] = [:]
+    var secondWindow: NSWindow?
     /// Web 按钮在 WebView 里的 CSS 矩形（左上原点，y 向下）。
     /// 必须由 JS 实测出来：把整个 WKWebView 的中心当作按钮去点，
     /// 只会点到 body 空白处，然后被误判成「引擎点不动 WebKit」。
@@ -273,6 +274,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         // 2) 计数器
         counterLabel = NSTextField(labelWithString: "count = 0")
         counterLabel.frame = NSRect(x: 180, y: y + 6, width: 120, height: 20)
+        // 稳定标识：期望状态验证要靠它定位「状态元素」，不靠文本模糊匹配
+        counterLabel.setAccessibilityIdentifier("countLabel")
         content.addSubview(counterLabel)
         let b2 = NSButton(title: "计数 +1", target: self, action: #selector(countClicked))
         b2.frame = NSRect(x: 300, y: y, width: 110, height: 32)
@@ -325,6 +328,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in self.publishTargets() }
     }
 
+    /// 在主窗口上方开一个「同一应用的另一个窗口」，用来测「目标上方有本应用窗口」这一情形
+    func openSecondWindow() {
+        guard secondWindow == nil else { return }
+        let f = window.frame
+        let r = NSRect(x: f.minX + 40, y: f.maxY - 220, width: 240, height: 180)
+        let w = NSWindow(contentRect: r, styleMask: [.titled, .closable],
+                         backing: .buffered, defer: false)
+        w.title = "Second"
+        w.level = .floating
+        let v = NSView(frame: NSRect(origin: .zero, size: r.size))
+        v.wantsLayer = true
+        v.layer?.backgroundColor = NSColor.systemBlue.withAlphaComponent(0.9).cgColor
+        w.contentView = v
+        w.orderFront(nil)
+        secondWindow = w
+        Logger.shared.event("secondWindow.open", "app", nil)
+    }
+
     @objc func plainClicked() {
         Logger.shared.event("btnPlain.click", "btnPlain", nil)
         Logger.shared.bump("clicks")
@@ -358,6 +379,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         case "deminimize": window.deminiaturize(nil)
         case "hide": window.orderOut(nil)
         case "show": window.makeKeyAndOrderFront(nil)
+        case "secondWindow": openSecondWindow()
+        case "closeSecond": secondWindow?.orderOut(nil); secondWindow = nil
         default: break
         }
         Logger.shared.event("cmd.applied", "app", nil, raw.trimmingCharacters(in: .whitespacesAndNewlines))

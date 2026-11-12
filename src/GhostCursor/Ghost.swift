@@ -324,16 +324,30 @@ final class CursorController {
         if !windowShown { panel.orderFrontRegardless(); windowShown = true }
     }
 
-    /// 小窗口跟随光标：窗口原点 = 全局点 − 尖端内偏移，并夹在屏幕内
+    /// 小窗口跟随光标：窗口原点 = 全局点 − 尖端内偏移，并夹在「该点所属的显示器」内
+    ///
+    /// v0.4.2 的写法是 `NSScreen.screens.first` + 主屏宽高夹取 ——
+    /// 目标在副屏（尤其负 X 的左侧屏）时，窗口会被夹回主屏，
+    /// 于是「画的位置」和「点的位置」不是同一处。
+    /// 现在按点选屏，坐标换算统一走 DisplayCoordinateTransformer。
     private func positionWindow() {
-        guard let screen = NSScreen.screens.first else { return }
-        let screenH = screen.frame.height
-        let screenW = screen.frame.width
+        let displays = DisplayCoordinateTransformer.liveDisplays()
+        guard let disp = DisplayCoordinateTransformer.display(containingCG: model.display,
+                                                             displays: displays),
+              let primary = displays.first(where: { $0.isPrimary }) ?? displays.first else { return }
+        let screenRect = disp.cgFrame
         var originCG = CGPoint(x: model.display.x - GHOST_TIP.x,
                                y: model.display.y - GHOST_TIP.y)
-        originCG.x = max(0, min(originCG.x, screenW - GHOST_WIN_SIZE))
-        originCG.y = max(0, min(originCG.y, screenH - GHOST_WIN_SIZE))
-        let appkitOrigin = CGPoint(x: originCG.x, y: screenH - (originCG.y + GHOST_WIN_SIZE))
+        // 夹取范围 = 该显示器的 CG 矩形（可负 X / 负 Y）
+        let minX = screenRect.minX
+        let maxX = screenRect.maxX - GHOST_WIN_SIZE
+        let minY = screenRect.minY
+        let maxY = screenRect.maxY - GHOST_WIN_SIZE
+        originCG.x = max(minX, min(originCG.x, max(minX, maxX)))
+        originCG.y = max(minY, min(originCG.y, max(minY, maxY)))
+        // CG 矩形 → AppKit 原点（逐边翻转，用主屏高度）
+        let appkitOrigin = CGPoint(x: originCG.x,
+                                   y: primary.appKitFrame.height - (originCG.y + GHOST_WIN_SIZE))
         if panel.frame.origin != appkitOrigin {
             panel.setFrameOrigin(appkitOrigin)
         }
@@ -354,7 +368,8 @@ final class CursorController {
             : false
         // 点必须在窗口矩形内，且未被更上层的窗口盖住
         let inside = frame.map { $0.contains(model.target) } ?? false
-        let visible = inside && TargetWindowVisibilityManager.pointVisible(windowId: wid, point: model.target)
+        let visible = inside && TargetWindowVisibilityManager.pointVisible(
+            windowId: wid, point: model.target, selfPid: getpid())
         model.suppressed = !visible
         return visible
     }
@@ -409,9 +424,10 @@ final class CursorController {
         s["winX"] = round(panel.frame.minX)          // AppKit 坐标（左下原点）
         s["winY"] = round(panel.frame.minY)
         // CG 坐标（左上原点），测试与 CLI 一律用它，避免两套坐标系互相打架
-        let screenH = NSScreen.screens.first?.frame.height ?? 0
+        let primaryH = DisplayCoordinateTransformer
+            .primaryHeight(DisplayCoordinateTransformer.liveDisplays())
         s["winCGX"] = round(panel.frame.minX)
-        s["winCGY"] = round(screenH - panel.frame.maxY)
+        s["winCGY"] = round(primaryH - panel.frame.maxY)
         s["tipX"] = round(model.display.x)
         s["tipY"] = round(model.display.y)
         s["shown"] = windowShown

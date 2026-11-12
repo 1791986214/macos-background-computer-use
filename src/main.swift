@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-let VERSION = "0.4.2"
+let VERSION = "0.5.0"
 
 func usage() {
     print("""
@@ -81,7 +81,19 @@ if args.flag("pretty") { gPretty = true }
 if cmd == "ghost", Array(argv.dropFirst()).first == "daemon" {
     gSkipActivationPolicy = true
 }
+// trace daemon 是纯旁观者：不建 NSApplication、不写 activation policy，
+// 只轮询前台应用。它绝不能因为自己是 AppKit 进程而影响前台。
+if cmd == "trace", Array(argv.dropFirst()).first == "daemon" {
+    gSkipActivationPolicy = true
+}
 bootstrapWindowServer()
+
+// 被动激活追踪：只有追踪器在跑时才记一条命令标记（一次 stat，约 0.02ms）。
+// 它不做任何拦截、不阻塞、不改变执行路径。
+// trace 自己的命令不记标记，否则追踪器会把自己算成「抢前台的人」
+if cmd != "trace" {
+    traceMark(command: ([cmd] + argv.dropFirst().prefix(1)).joined(separator: " "))
+}
 
 switch cmd {
 case "perm": cmdPerm(args)
@@ -89,6 +101,7 @@ case "capabilities": cmdCapabilities(args)
 case "experience": cmdExperience(args)
 case "bench": cmdBench(args)
 case "perf": cmdPerf(args)
+case "trace": cmdTrace(args)
 case "selftest": cmdSelfTest(args)
 case "session": cmdSession(args)
 case "guard": cmdGuard(args)
@@ -109,7 +122,12 @@ case "click": cmdClick(args)
 case "ghost": cmdGhost(args)
 case "act": cmdAct(args)
 case "vis": cmdVis(args)
+case "occlusion": cmdOcclusion(args)
+case "displays": cmdDisplays(args)
+case "compat": cmdCompat(args)
+case "focus": cmdFocus(args)
 case "move": cmdMove(args)
+case "launch": cmdLaunch(args)
 case "drag": cmdDrag(args)
 case "scroll": cmdScroll(args)
 case "key": cmdKey(args)

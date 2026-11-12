@@ -26,19 +26,41 @@ agent_created: true
 
 本技能是**第 3 档**，不是万能替代品。能在终端里干的事不要动 GUI。
 
+### 网页 vs 原生：先选对工具（v0.5.0）
+
+| 目标 | 用什么 | 说明 |
+|---|---|---|
+| 网页内容读取 / 搜索 | `WebFetch` / `WebSearch` | 只读抓取，不碰用户浏览器 |
+| 页面展示给用户 | `present_files`（内置右侧面板） | 用户自己的 WorkBuddy 窗口，不影响目标应用 |
+| 网页内点击 / 输入 / 滚动 | **本构建没有该接口** | 不要用坐标点击冒充浏览器自动化，见下 |
+| macOS 原生应用 | 本技能（`wbcu`） | 本技能的强项 |
+| 混合任务 | 各自做自己那段 | WorkBuddy 负责串，两边互不代理 |
+
+**红线：不要用 `wbcu` 的坐标点击去点网页元素。**
+坐标点击落在「屏幕上那个位置」，页面一滚动/改布局就点错，而且读不到页面状态来验证结果。
+需要网页交互但没有接口时，**如实说能力缺失**，不要假装成功。
+
+完整调查见 `docs/browser-use.md`。
+
 ---
 
-## 二、开工前必做的三件事
+## 二、开工前必做
 
 ```bash
 wbcu capabilities --json     # ① 能力与权限：AX / 屏幕录制 / 输入注入各自是否可用
 wbcu guard --list            # ② 已授权应用白名单
-wbcu session start --app <bundleId> --json   # ③ 建会话（会做授权检查，未授权直接拒绝）
+wbcu launch --app <bundleId> --json          # ③ 需要时才启动；**别用 open -a**
+wbcu session start --app <bundleId> --json   # ④ 建会话（会做授权检查，未授权直接拒绝）
 ```
+
+`wbcu launch` 与 `open -a` 的区别是硬区别：前者 `activates=false`，应用在后台起来，
+用户的前台窗口不动；后者必然把目标顶到最前。**已经在跑就什么都不做**（重复 `open -a`
+正是「每步都抢前台」的常见来源）。
 
 - 权限不足 → 明确告诉用户缺哪一项、去「系统设置 → 隐私与安全性」开哪个，**不要试图绕过**。
 - 应用不在白名单 → 用 `wbcu guard --app <bundleId> --allow`，且必须**先得到用户对该应用的明确同意**。
-- 会话 id 形如 `s12345`，后续所有动作都带 `--id`，不要每步重新解析窗口。
+- 会话 id 形如 `s12345`。**两种寻址都行**：带 `--id s12345`，或直接 `--app <bundleId>`。
+  后者更省事，而且不会因为「忘了 id」而重建会话。**不要每步重新 `session start`。**
 
 > 中文系统里应用名和 bundle id 不一致：`TextEdit` 叫「文本编辑」，`Calculator` 叫「计算器」。
 > 名字匹配不上就立刻换 bundle id。
@@ -48,14 +70,17 @@ wbcu session start --app <bundleId> --json   # ③ 建会话（会做授权检�
 ## 三、标准工作流（照这个顺序做）
 
 ```bash
-# 1. 建会话
+# 1. 建会话（同 App 已有活会话 → 自动复用，不重新初始化；要强制新建加 --new）
 SID=$(wbcu session start --app com.apple.calculator --json | jq -r .session.id)
 
 # 2. 看界面：先 AX 树（便宜、精确），需要像素再截图
 wbcu session inspect --id $SID --max 200
 wbcu session capture --id $SID --out /tmp/cap.png
 
-# 3. 操作：优先语义（按 index 或文本），其次坐标
+# 3. 操作：优先语义（按 identifier 或文本），其次坐标
+#    --app 直接寻址：不用记 session id，也就不会「忘了 id → 重新 start → 重新拉窗口」
+wbcu session click --app com.apple.calculator --identifier Multiply --exact
+wbcu session click --app com.apple.calculator --text "全部清除" --exact
 wbcu session click --id $SID --text "全部清除" --exact
 wbcu session click --id $SID --element 12
 wbcu session click --id $SID --x 388 --y 557 --label "7"
@@ -65,6 +90,14 @@ wbcu session type --id $SID --text "要填的内容" --element 18
 
 # 5. 验证：必须读值，不要读 ok
 wbcu session verify --id $SID --expect "42"
+
+# 5b. 更硬的写法：把期望直接挂在动作上（v0.4.3）
+#     result 四分类：success / already_satisfied / failure / inconclusive
+wbcu session click --id $SID --identifier One --exact \
+  --expect 7 --expect-el role:AXStaticText
+# 幂等操作显式声明，避免把「本来就不该变」当成失败
+wbcu session click --id $SID --text "全部清除" --exact \
+  --expect 0 --expect-el role:AXStaticText --idempotent
 
 # 6. 收尾：释放会话（最后一个会话结束时自动隐藏虚拟光标）
 wbcu session end --id $SID
@@ -118,7 +151,9 @@ AX 语义动作  →  进程级定向投递  →  坐标点击  →  全局 HID�
 ## 五、必须遵守的约束
 
 - **鼠标分离**：Agent 光标（紫箭头）是独立可视化层，与系统鼠标无任何关系。永远不要读/写真实指针位置来"同步"。
-- **不切换前台**：除非用户要求，不调 `wbcu activate`。
+- **不切换前台**：除非用户要求，不调 `wbcu activate`，也不要在任务中途跑
+  `open -a` / `osascript ... activate`。这两条是「每步都抢前台」最常见的原因，
+  用 `wbcu trace` 能直接看到归因。
 - **不抢键盘焦点**：`key` 命令走 `postToPid`，不进全局事件流。
 - **只碰授权应用**：每个 app 单独授权，白名单外的操作会被引擎直接拒绝（exit 3）。
 - **失败就说失败**：返回 `ok:false` 或 `no_observable_change` 时如实报告，禁止编造"已完成"。
@@ -126,6 +161,25 @@ AX 语义动作  →  进程级定向投递  →  坐标点击  →  全局 HID�
 - **结束要清理**：`session end`；长任务中断也要 end（或 `wbcu ghost hide` + `session end --all`）。
 
 ---
+
+## 五点五、诊断命令（v0.4.3）
+
+```bash
+wbcu occlusion --window <id> --x <x> --y <y>   # 谁压在目标上面？完整 z 序
+wbcu vis --window <id> --x <x> --y <y>         # 可见性状态（front/background/遮挡/最小化）
+wbcu displays                                   # 显示器几何与缩放
+wbcu compat                                     # 未文档化字段的版本闸门与逐应用退让
+wbcu focus --window <id>                        # keyWindow / 第一响应者
+wbcu trace start / report / stop                # 被动记录前台切换并做责任归因
+wbcu launch --app <bundleId>                    # 后台启动，不抢前台
+```
+
+用法要点：
+
+- 点到没反应时，先 `wbcu occlusion` 看是不是被挡了；再 `wbcu vis` 看状态。
+- `result=inconclusive` 不代表成功也不代表失败：给个 `--expect` 再来一次。
+- 跨应用稳定性存疑时看 `wbcu compat`：某应用若被降级（`degraded=true`），
+  说明它连续 3 次投递后验证失败，引擎会自动改为 AX 优先。
 
 ## 六、能力边界（实测，别硬扛）
 

@@ -16,6 +16,9 @@ import CoreGraphics
 
 var cgRect = CGRect(x: 40, y: 40, width: 320, height: 220)
 var label = "Cover"
+/// 窗口层级：0 = 普通窗口；3 = .floating（NSPanel 一类浮层）；8 = 更高浮层
+var level = 0
+var usePanel = false
 
 var args = Array(CommandLine.arguments.dropFirst())
 var i = 0
@@ -30,6 +33,11 @@ while i < args.count {
     case "--label":
         i += 1
         if i < args.count { label = args[i] }
+    case "--level":
+        i += 1
+        if i < args.count { level = Int(args[i]) ?? 0 }
+    case "--panel":
+        usePanel = true
     default:
         break
     }
@@ -46,11 +54,13 @@ final class CoverDelegate: NSObject, NSApplicationDelegate {
                            y: screenH - cgRect.maxY,
                            width: cgRect.width,
                            height: cgRect.height)
-        window = NSWindow(contentRect: frame,
-                          styleMask: [.titled, .closable],
-                          backing: .buffered, defer: false)
+        let style: NSWindow.StyleMask = usePanel ? [.borderless, .nonactivatingPanel] : [.titled, .closable]
+        let w: NSWindow = usePanel
+            ? NSPanel(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
+            : NSWindow(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
+        window = w
         window.title = label
-        window.level = .normal
+        window.level = NSWindow.Level(rawValue: level)
         window.isReleasedWhenClosed = false
         let v = NSView(frame: NSRect(origin: .zero, size: frame.size))
         v.wantsLayer = true
@@ -60,15 +70,15 @@ final class CoverDelegate: NSObject, NSApplicationDelegate {
         t.textColor = .white
         v.addSubview(t)
         window.contentView = v
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+        if !usePanel { NSApp.activate(ignoringOtherApps: true) }
         // 把实际摆位回报出来，避免测试只靠假设
         let report: [String: Any] = [
             "pid": Int(ProcessInfo.processInfo.processIdentifier),
             "windowNumber": window.windowNumber,
             "frame": ["x": frame.minX, "y": frame.minY, "w": frame.width, "h": frame.height],
             "cgRect": ["x": cgRect.minX, "y": cgRect.minY, "w": cgRect.width, "h": cgRect.height],
-            "label": label
+            "label": label, "level": level, "panel": usePanel
         ]
         if let d = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) {
             try? d.write(to: URL(fileURLWithPath: "/tmp/wbcu-lab/cover.json"))

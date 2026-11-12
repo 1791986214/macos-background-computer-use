@@ -127,14 +127,30 @@ enum ExpectedStateVerifier {
         let kind = parts.count == 2 ? parts[0] : ""
         let arg = parts.count == 2 ? parts[1] : h
 
+        // 支持 `role:AXStaticText[1]` 这种下标写法。
+        // 为什么必须有：计算器窗口里有两个 AXStaticText —— 上面是表达式行、下面是结果行。
+        // 不写下标就永远读表达式行，于是「按了等号却说没变化」，且看起来像引擎的错。
+        var nth = 0
+        var argClean = arg
+        if let r = arg.range(of: #"\[[0-9]+\]$"#, options: .regularExpression) {
+            nth = Int(arg[r].dropFirst().dropLast()) ?? 0
+            argClean = String(arg[arg.startIndex..<r.lowerBound])
+        }
+
         var hit: AXItem? = nil
         switch kind {
         case "id":
-            hit = snap.items.first { $0.identifier == arg && !$0.role.isEmpty }
+            hit = snap.items.first { $0.identifier == argClean && !$0.role.isEmpty }
         case "role":
-            // 同一 role 可能有多个，取「第一个有值的」最稳
-            hit = snap.items.first { $0.role == arg && !$0.value.isEmpty }
-                ?? snap.items.first { $0.role == arg }
+            // 同一 role 可能有多个。不写下标时保持老行为（优先有值的那个）；
+            // 写了下标就是**树序位置**，不再先过滤空值 ——
+            // 否则「表达式行为空」时下标 1 会越界，表现为「读不到状态」。
+            let cands = snap.items.filter { $0.role == argClean }
+            if nth == 0 {
+                hit = cands.first { !$0.value.isEmpty } ?? cands.first
+            } else {
+                hit = nth < cands.count ? cands[nth] : nil
+            }
         case "text":
             hit = snap.items.first { $0.title.contains(arg) || $0.value.contains(arg) }
         case "path":
@@ -153,6 +169,28 @@ enum ExpectedStateVerifier {
                                identifier: it.identifier, title: it.title,
                                value: it.value, elapsedMs: snap.elapsedMs)
         return (r, snap)
+    }
+
+    /// 在整个窗口里找「值为期望值」的元素。
+    ///
+    /// 为什么需要它：有些应用的「结果」不是固定元素，而是按下动作后才出现的新元素。
+    /// 实测（macOS 26.6 计算器）：平时只有一个 AXStaticText（当前输入），
+    /// 按下等号后变成两个 —— 上面是表达式 `125×8`、下面是结果 `1,000`，
+    /// 而 `role:AXStaticText` 默认读到的是上面那个表达式行。
+    /// 于是「明明算对了」被判成 failure。这种情况下按值搜一次，比下标猜位更可靠。
+    ///
+    /// 只在主判据不匹配时才调用（失败路径），正常成功路径不付这个成本。
+    static func searchValue(pid: pid_t, expected: String, mode: String) -> ElementReadout {
+        let snap = walkAX(pid: pid, maxDepth: 16, maxNodes: 2000,
+                          includeActions: false, skipMenuBar: true)
+        guard let it = snap.items.first(where: {
+            !$0.value.isEmpty && matches($0.value, expected, mode: mode)
+        }) else {
+            return ElementReadout(found: false, elapsedMs: snap.elapsedMs)
+        }
+        return ElementReadout(found: true, path: it.path, role: it.role,
+                              identifier: it.identifier, title: it.title, value: it.value,
+                              elapsedMs: snap.elapsedMs)
     }
 
     /// 只读一次状态（不建整树，走 path 回查，快）
@@ -211,7 +249,8 @@ enum ExpectedStateVerifier {
                          delivered: Bool,
                          failureReason: String,
                          targetDesc: String,
-                         actionDesc: String) -> VerifyReport {
+                         actionDesc: String,
+                         elsewhere: ElementReadout? = nil) -> VerifyReport {
         var r = VerifyReport()
         r.precondition = pre
         r.actualState = actual
@@ -246,6 +285,17 @@ enum ExpectedStateVerifier {
                 r.confidence = 0.95
                 r.clickConsumed = "proven"
                 r.notes.append("状态 \(pre.stateValue.isEmpty ? "?" : pre.stateValue) → \(actual.stateValue)")
+                return r
+            }
+            // 主元素没达到期望，但在窗口别处找到了期望值
+            if let e = elsewhere, e.found {
+                r.result = .success
+                r.verificationMethod = "ax_value_found_elsewhere"
+                r.confidence = 0.85
+                r.clickConsumed = "proven"
+                r.actualState = e
+                r.notes.append("主显示元素是 \(actual.stateValue)，期望值出现在 \(e.role)"
+                               + "（path \(e.path)）—— 典型是「表达式行 / 历史行」与「结果行」分离的界面")
                 return r
             }
             // 没达到期望

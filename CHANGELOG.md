@@ -5,6 +5,94 @@
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-12
+
+能力打磨阶段。不新增任何阻塞、审批或门禁；只做四件事：**少抢前台、少重复初始化、点得更准、把证据留下来**。
+
+### 一、被动激活追踪（`wbcu trace`）
+
+在回答「谁抢了前台」之前，先要有证据。新增追踪器：
+
+- 监听 `NSWorkspace.didActivateApplicationNotification`，事件驱动、零轮询（轮询版实测被系统节流到 16.8s 一次，切换全丢）
+- 每条 wbcu 命令写一对开始/结束时间戳（`atexit` 补 t1），**只在命令真正运行的那段时间内**归因
+- 三分类 + 一类：`user`（400ms 内有真实硬件输入）/ `wbcu`（落在命令运行窗口内）/ `external`（都不是）/ `harness`（测试脚手架自己登记）
+- `wbcu trace mark --note "..."` 让测试脚手架主动登记，避免把自己的切换算成引擎的锅
+
+**归因窗口的一个坑**：早期用「命令开始后 1.5s 内」归因，结果脚本自己的 `osascript activate`
+被算成「wbcu 抢前台」。现在窗口是 `[t0-50ms, t1]`，命令结束后 500ms 内的变化只标
+「紧随其后」不做归因。
+
+### 二、`wbcu launch`：后台启动，不抢前台
+
+Agent 最自然的动作是 `open -a Calculator`——那条命令**必然**把目标顶到最前。
+新增的 `launch` 用 `NSWorkspace.OpenConfiguration.activates = false`：
+
+| 行为 | `open -a` | `wbcu launch` |
+|---|---|---|
+| 应用未运行 | 启动并**激活** | 启动，`activated=false` |
+| 应用已在运行 | **重新激活到前台** | 直接返回，不激活 |
+| 实测前台变化 | 1 次 | **0 次** |
+
+### 三、会话复用：一个任务 = 一个会话
+
+`session start` 命中同 App 的活会话时直接复用（`reused=true`），不再重算整树指纹、
+不再重拉 ghost daemon。实测 `session start` 190ms → **94ms**。
+
+同时支持 `--app` 直接寻址：`session click --app com.apple.calculator --identifier One`
+不需要记 session id —— 「忘了 id → 重新 start → 重新拉窗口」这条链路从结构上消失。
+
+ghost daemon 拉起改为非阻塞预热（`waitForReady: false`），会话建立不再等可视化组件。
+
+### 四、点得更准：`--identifier` 与期望状态的两个修正
+
+- **`session click --identifier <AXIdentifier>`**：按稳定标识点。
+  但实测有个反例——计算器的清除键**连 identifier 都会随状态变**（干净状态 `AllClear`、
+  有输入后 `Clear`），所以「identifier 一定稳定」这个假设不成立，测试里两个都试。
+- **期望元素选择器支持下标**：`role:AXStaticText[1]`。
+- **按值搜索兜底**：主显示元素不匹配时，再在窗口里按值搜一次。
+  原因：计算器按下等号后，结果 `1,000` 出现在**新出现的第二个** AXStaticText 上，
+  而主元素仍是表达式行 `125×8`。旧实现死等主元素路径，白等 600ms 还判 failure。
+  现在三段式：先读（多数一帧内更新）→ 最多 120ms 等主元素命中（一发现「变了但不对」立刻跳出）
+  → 按值搜索 → 才用满 `maxWaitMs`。计算器等号那步 **739.9ms → 282.6ms**。
+
+### 五、Browser Use 协同：查清边界，不做假接口
+
+调查报告见 [`docs/browser-use.md`](docs/browser-use.md)。结论：
+
+- 本构建**没有**向 Agent 暴露浏览器自动化工具（无 `browser_*`、无插件、无扩展包）
+- 可用的是 `present_files`（内置右侧面板，只渲染不交互）、`WebFetch` / `WebSearch`（只读）
+- 因此 **不得用坐标点击冒充网页交互**；需要网页交互时如实报告能力缺失
+
+Skill 里写死了路由：网页读取 → `WebFetch`；展示 → `present_files`；原生应用 → Third Hand；
+混合任务各自做自己那段，互不代理。
+
+### 六、测试
+
+新增 `tests/regression/no-reactivation.sh`（13 项断言，全部实跑）：
+
+```
+✅ 后台启动成功且未激活（activated=false）
+✅ 启动后前台未变（WorkBuddy）
+✅ 已在运行时 launch 不重复启动、不激活（alreadyRunning=true）
+✅ 同一 App 复用同一会话（s48416），没有重复初始化
+✅ harness 切换确实改变了前台（WorkBuddy → Safari浏览器）
+✅ 7/7 步验证通过（含结果行与表达式行分离的那一步）
+✅ 最终读数为 1,000
+✅ 计算全程前台停在用户的应用（Safari浏览器）
+✅ 0 次前台变化归因于 wbcu 命令
+✅ 0 次未登记的外部 activate
+✅ ghost 进程已清理
+```
+
+7 套 GUI 回归 + `selftest 53/53` 全部保持通过。
+
+### 七、明确的「没做」
+
+- 没有新增审批、确认、前台状态守卫
+- 没有改 Browser Use（也没有可改的接口）
+- 没有把 Third Hand 做成拦截层：`act` / `session click` 路径里没有任何 `activate` 调用
+
+
 ## [0.4.3] — 2026-11-12
 
 严格意义上的可靠性审计。v0.4.2 证明了「能在后台点中」，这一版回答的是

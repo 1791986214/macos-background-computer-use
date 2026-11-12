@@ -9,7 +9,7 @@
 | 机器 | MacBook（Apple Silicon, arm64） |
 | macOS | 26.6 (Build 25G72) |
 | 工具链 | CommandLineTools，Swift 6.3.3，编译用 `MacOSX26.5.sdk` |
-| 引擎版本 | 0.4.3 |
+| 引擎版本 | 0.5.0 |
 | 判据 | 目标 UI **实际变化**（读 AX 值），不是命令返回码 |
 | 零干扰判据 | 真实鼠标零位移 + 前台应用不变 + `targetActive == false` + `idle` 探针确认期间无用户输入 |
 
@@ -242,3 +242,47 @@ fixture 见 `tests/integration/Fixture.swift`：同一窗口里放 NSButton / NS
 | Ghost 在副屏右缘 | 纯函数 | ✅ |
 
 **真机多屏：Not Tested**（本机只有一块内建屏）。
+
+---
+
+## 十、v0.5.0 非阻塞与不抢前台
+
+### 10.1 启动方式对比（Calculator，真机）
+
+| 方式 | 启动 | 前台变化 | 已在运行时的行为 |
+|---|---|---|---|
+| `open -a Calculator` | ✅ | **1 次**（顶到最前） | **重新激活** |
+| `wbcu launch --app com.apple.calculator` | ✅ | **0 次** | 直接返回，不激活 |
+| `wbcu launch --foreground` | ✅ | 1 次（显式要求） | 不激活 |
+
+### 10.2 会话复用（Calculator）
+
+| 场景 | 耗时 | 说明 |
+|---|---|---|
+| 首次 `session start` | 190 ms | 含窗口发现 + 整树指纹 + ghost 预热（非阻塞） |
+| 再次 `session start`（复用） | **94 ms** | 只刷新窗口 frame，不重算指纹、不重拉 daemon |
+| `session click --app ...` | 60–100 ms | 不需要 id，不会因为「忘了 id」重建会话 |
+
+### 10.3 期望状态验证的两个实测坑
+
+| 坑 | 现象 | 修法 |
+|---|---|---|
+| 显示值带 LRM + 千分位 | `‎7,778` 逐字符比较 → 误判 failure | 值规范化（去格式类字符、去千分位） |
+| 结果行是「新出现的元素」 | 按下等号后结果在第二个 AXStaticText，主元素仍是表达式行 | 主元素不匹配 → 按值搜索一次 |
+
+| 步骤 | 修前 | 修后 |
+|---|---|---|
+| `=`（结果落在另一个元素） | 739.9 ms（死等超时）＋判 failure | **282.6 ms** ＋ success |
+| 普通数字键 | 60–80 ms | 60–80 ms（未变） |
+
+### 10.4 归因准确性的一个反例
+
+早期归因规则是「命令开始后 1.5s 内的切换算 wbcu」。实测把测试脚本自己的
+`osascript activate Safari` 算成了「wbcu 抢前台」。现在的窗口是 `[t0-50ms, t1]`，
+命令结束后 500ms 内的变化只标「紧随其后」，不再归因。
+
+### 10.5 Not Tested
+
+- 外部浏览器（Chrome / Edge）自动化：本构建无接口
+- 网页内交互：无接口，未测
+- 多显示器真机：本机只有一块屏

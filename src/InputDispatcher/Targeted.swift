@@ -166,7 +166,11 @@ func ghostOverlayBundleExecutable() -> String? {
     return nil
 }
 
-func ensureGhostDaemon() {
+/// 确保 ghost daemon 在跑。
+///
+/// `waitForReady: false` 用于「现在不需要画，但想提前预热」的场景（例如会话建立）：
+/// 拉起进程后立刻返回，不阻塞调用方。真正要画的时候（goto）会再等就绪。
+func ensureGhostDaemon(waitForReady: Bool = true) {
     if ghostDaemonAlive(), ghostCall(["op": "ping"], timeoutMs: 300) != nil { return }
     // 记下用户当前的前台 App，通过环境变量交给 daemon：
     // daemon 是个 NSApplication，启动完成后会被系统激活（前台变成 wbcu）。
@@ -190,6 +194,7 @@ func ensureGhostDaemon() {
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
     try? p.run()
+    guard waitForReady else { return }
     for _ in 0..<50 {
         if ghostDaemonAlive(), ghostCall(["op": "ping"], timeoutMs: 300) != nil {
             // 前台还原由 daemon 自己完成（见 runGhostDaemon），这里只等它就绪
@@ -449,12 +454,43 @@ func performAgentAction(global point: CGPoint,
         if let exp = options.expectation {
             var pre = preState ?? ElementReadout(found: false)
             var actual = ElementReadout(found: false)
+            var elsewhere: ElementReadout? = nil
             if pre.found, let want = exp.value, !want.isEmpty {
-                let (a, waited) = ExpectedStateVerifier.waitFor(
-                    pid: pid, path: pre.path, expected: want,
-                    mode: exp.match, timeoutMs: exp.maxWaitMs)
+                // 三段式，目的是「该等的等、不该等的别等」：
+                //   ① 先读一次（多数 UI 一帧内就更新）
+                //   ② 最多 120ms 等主元素命中；一旦发现「变了但不对」立刻跳出
+                //   ③ 仍未命中 → 按值在窗口里搜一次（结果可能落在另一个元素上，
+                //      计算器的 «表达式行 / 结果行» 就是这种）
+                //   ④ 还不行 → 再给 maxWaitMs 的耐心（慢应用 / 异步渲染）
+                // 旧写法是死等主元素路径匹配，遇到 ③ 这类界面必然白等到超时（实测 600ms）。
+                var a = ExpectedStateVerifier.readPath(pid: pid, path: pre.path)
+                var matched = a.found
+                    && ExpectedStateVerifier.matches(a.stateValue, want, mode: exp.match)
+                if !matched {
+                    let baseline = a.stateValue
+                    let tWait = nowNs()
+                    while msSince(tWait) < 120 {
+                        usleep(20_000)
+                        a = ExpectedStateVerifier.readPath(pid: pid, path: pre.path)
+                        if a.found && ExpectedStateVerifier.matches(a.stateValue, want, mode: exp.match) {
+                            matched = true
+                            break
+                        }
+                        if a.found && a.stateValue != baseline { break }
+                    }
+                    if !matched {
+                        let f = ExpectedStateVerifier.searchValue(pid: pid, expected: want, mode: exp.match)
+                        if f.found { elsewhere = f; matched = true }
+                    }
+                }
+                if !matched, exp.maxWaitMs > 120 {
+                    let (w, waited) = ExpectedStateVerifier.waitFor(
+                        pid: pid, path: pre.path, expected: want,
+                        mode: exp.match, timeoutMs: max(0, exp.maxWaitMs - 120))
+                    a = w
+                    if waited > 0 { out.via = out.via.isEmpty ? "ax-state" : out.via + "+ax-state" }
+                }
                 actual = a
-                if waited > 0 { out.via = out.via.isEmpty ? "ax-state" : out.via + "+ax-state" }
             } else if pre.found {
                 // 只给了「变了」类期望：读一次当前值作为 actual
                 actual = ExpectedStateVerifier.readPath(pid: pid, path: pre.path)
@@ -466,7 +502,8 @@ func performAgentAction(global point: CGPoint,
                 changed: out.changed, delivered: out.delivered,
                 failureReason: out.changed == false ? failureReasonFor(out) : "",
                 targetDesc: "\(options.appBundle)#\(windowId)@(\(Int(point.x)),\(Int(point.y)))",
-                actionDesc: "\(out.mode)\(out.escalated ? "(escalated)" : "")")
+                actionDesc: "\(out.mode)\(out.escalated ? "(escalated)" : "")",
+                elsewhere: elsewhere)
         }
     }
     out.timing.verify = msSince(tMark)

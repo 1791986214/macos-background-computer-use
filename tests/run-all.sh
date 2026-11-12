@@ -40,7 +40,7 @@ if [ "$MODE" = "all" ]; then
   # 这五条是本轮修复的验收面；任一条失败都不允许发版。
   # 全部需要真实桌面 + GUI，缺授权时各自 warn 并计入 SKIPPED。
   for t in cursor-window-bounds background-targeted-click window-switch-isolation \
-           occlusion-behavior occlusion-layers ghost-cleanup; do
+           occlusion-behavior occlusion-layers ghost-cleanup no-reactivation; do
     echo
     "$HERE/regression/$t.sh" || FAIL=$((FAIL + 1))
   done

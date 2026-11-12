@@ -163,6 +163,61 @@ Observe → Locate → Choose Action → Execute → Verify
 
 ---
 
+## 🔒 不抢前台：证据，不是口号（v0.5.0）
+
+「每一步都把窗口重新带到前台」这个问题，靠口头保证解决不了。这一版的做法是：**先能证明，再修**。
+
+### 1. 被动激活追踪（`wbcu trace`）
+
+监听系统激活通知（事件驱动，不轮询），每条 wbcu 命令写一对开始/结束时间戳，
+于是每次前台变化都能被归因：
+
+| 归因 | 判据 | 含义 |
+|---|---|---|
+| `user` | 400ms 内有真实硬件输入 | 用户自己切的 |
+| `wbcu` | 落在某条命令的运行窗口内 | **引擎的锅** |
+| `external` | 都不是 | 典型是 Agent 跑了 `open -a` / `osascript activate` |
+| `harness` | 测试脚手架主动登记 | 不算任何一方 |
+
+```bash
+wbcu trace start
+# ... 跑任务 ...
+wbcu trace report
+# ⚠️ 14:57:03.421  WorkBuddy → 计算器  [wbcu]  cmd=session click(+88ms)
+```
+
+### 2. 两个具体的抢前台来源，都堵住了
+
+| 来源 | 修法 | 实测 |
+|---|---|---|
+| `open -a Calculator`（Agent 最自然的写法） | `wbcu launch`：`activates=false`，已在运行则什么都不做 | 前台变化 1 次 → **0 次** |
+| 每步重新 `session start` → 重新拉窗口 | 同 App 活会话自动复用；`--app` 直接寻址 | 190ms → **94ms**，且不再重复初始化 |
+
+### 3. 一次真实的后台任务（测试 A）
+
+用户前台是 Safari，Third Hand 在后台算 `125×8`：
+
+```
+✅ 后台启动成功且未激活（activated=false）
+✅ 同一 App 复用同一会话，没有重复初始化
+✅ 7/7 步验证通过，最终读数 1,000
+✅ 计算全程前台停在 Safari
+✅ 0 次前台变化归因于 wbcu 命令
+```
+
+### 4. 网页交给谁
+
+本构建**没有**给 Agent 暴露浏览器自动化接口，所以：
+
+| 目标 | 工具 |
+|---|---|
+| 网页内容读取 / 搜索 | `WebFetch` / `WebSearch` |
+| 页面展示 | `present_files`（内置右侧面板） |
+| 网页内点击 / 输入 | **不可用** —— 且不得用坐标点击冒充 |
+| 原生应用 | Third Hand |
+
+调查方法与全部证据：[`docs/browser-use.md`](docs/browser-use.md)。
+
 ## 🏗️ 工作原理
 
 ```text

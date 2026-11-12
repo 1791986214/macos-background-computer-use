@@ -372,6 +372,77 @@ func cmdType(_ args: Args) {
     exit(0)
 }
 
+// MARK: - 启动应用（不抢前台）
+
+/// `wbcu launch --app <bundleId|名称>`
+///
+/// 存在的理由只有一个：**首次打开目标应用时不要抢用户的前台**。
+/// Agent 最自然的行为是 `open -a Calculator` —— 那条命令必然把 Calculator 顶到最前。
+/// 这里用 NSWorkspace.OpenConfiguration.activates = false，从 API 层面就说清楚
+/// 「我要它启动，但不要它上前台」，不是启动完再偷偷切回去。
+///
+/// 已经在运行 → 直接返回，不做任何激活。
+func cmdLaunch(_ args: Args) {
+    gJSONMode = args.flag("json")
+    guard let token = args.str("app") else { fail("需要 --app <bundleId|名称>") }
+
+    // 已在运行：什么都不做。这一步是「避免重复启动」的关键，
+    // 因为重复 `open -a` 会把窗口重新带到前台。
+    if let running = findRunningApp(token) {
+        let out: [String: Any] = ["ok": true, "launched": false, "alreadyRunning": true,
+                                  "pid": Int(running.processIdentifier),
+                                  "name": running.localizedName ?? "",
+                                  "bundleId": running.bundleIdentifier ?? "",
+                                  "activated": false]
+        if gJSONMode { emit(out) }
+        else { emitText("· \(running.localizedName ?? token) 已在运行（pid \(running.processIdentifier)），未激活") }
+        exit(0)
+    }
+
+    var url: URL? = NSWorkspace.shared.urlForApplication(withBundleIdentifier: token)
+    if url == nil {
+        // 允许传应用名
+        let candidates = ["/System/Applications/\(token).app",
+                          "/Applications/\(token).app",
+                          NSHomeDirectory() + "/Applications/\(token).app"]
+        url = candidates.map { URL(fileURLWithPath: $0) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+    if url == nil { url = NSWorkspace.shared.urlForApplication(toOpen: URL(fileURLWithPath: token)) }
+    guard let appURL = url else { fail("找不到应用: \(token)") }
+
+    let cfg = NSWorkspace.OpenConfiguration()
+    // 核心：不激活。用户说的「首次可以显示，但别抢前台」就落在这个开关上。
+    cfg.activates = args.flag("foreground")
+    cfg.addsToRecentItems = false
+    cfg.createsNewApplicationInstance = false
+
+    var resultPid: pid_t = 0
+    var errMsg = ""
+    let sem = DispatchSemaphore(value: 0)
+    NSWorkspace.shared.openApplication(at: appURL, configuration: cfg) { app, err in
+        if let app { resultPid = app.processIdentifier }
+        if let err { errMsg = err.localizedDescription }
+        sem.signal()
+    }
+    _ = sem.wait(timeout: .now() + 8)
+
+    let out: [String: Any] = ["ok": resultPid > 0, "launched": resultPid > 0,
+                              "alreadyRunning": false, "pid": Int(resultPid),
+                              "name": appURL.deletingPathExtension().lastPathComponent,
+                              "activated": args.flag("foreground"),
+                              "error": errMsg]
+    if gJSONMode { emit(out) }
+    else if resultPid > 0 {
+        emitText(args.flag("foreground")
+                 ? "✅ 已启动并激活 \(out["name"] ?? "")（pid \(resultPid)）"
+                 : "✅ 已后台启动 \(out["name"] ?? "")（pid \(resultPid)），未抢前台")
+    } else {
+        emitText("❌ 启动失败: \(errMsg)")
+    }
+    exit(resultPid > 0 ? 0 : 1)
+}
+
 // MARK: - 应用激活 / 窗口移动
 func cmdActivate(_ args: Args) {
     gJSONMode = args.flag("json")

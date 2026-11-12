@@ -112,6 +112,18 @@ func allSessions() -> [SessionState] {
     }.sorted { $0.createdAt < $1.createdAt }
 }
 
+/// 找出「同一个 App 还活着的会话」，新的优先。
+///
+/// 为什么需要它：Agent 每做一步就可能重新 `session start` 一次。以前每次都新建 id、
+/// 重算整树指纹、重新拉 ghost daemon —— 每一步都在重复初始化，还容易把
+/// 「打开应用」这一步重跑一遍（那是真正抢前台的动作）。
+/// 有了复用，一个任务全程只有一个会话，初始化只做一次。
+func liveSession(forBundleId bid: String) -> SessionState? {
+    allSessions()
+        .filter { $0.bundleId == bid && sessionTargetAlive($0) }
+        .max { $0.createdAt < $1.createdAt }
+}
+
 // MARK: - 目标解析与存活检查
 
 /// 目标进程是否还活着、窗口是否还在（决定 target_gone）
@@ -192,6 +204,19 @@ func cmdSession(_ args: Args) {
 }
 
 private func needSession(_ args: Args) -> SessionState {
+    // 允许用 --app 直接寻址：命中活着的会话就复用，否则现建一个。
+    // 这样 Agent 不必记住 id，也就不容易「忘了 id → 重新 start → 重新拉窗口」。
+    if args.str("id") == nil, let token = args.str("app") {
+        guard let app = findRunningApp(token) else {
+            emitError(CUError.windowNotFound, "应用未运行: \(token)")
+        }
+        let bid = app.bundleIdentifier ?? token
+        if var live = liveSession(forBundleId: bid) {
+            _ = refreshSessionWindow(&live)
+            return live
+        }
+        return createSession(app: app, bundleId: bid, args: args)
+    }
     guard let id = args.str("id") else {
         emitError(CUError.badRequest, "缺少 --id（先用 wbcu session start）")
     }
@@ -229,6 +254,49 @@ private func sessionStart(_ args: Args) {
     guard let app = findRunningApp(token) else {
         emitError(CUError.windowNotFound, "应用未运行: \(token)")
     }
+    let bid = app.bundleIdentifier ?? token
+
+    // 复用优先：同一个 App 已有活着的会话就直接还它。
+    // 这一步省掉的是重复的窗口发现 + 整树指纹（60~90ms）+ ghost daemon 拉起，
+    // 更重要的是让「一个任务 = 一个会话」，从结构上消除「每步重新初始化」。
+    if !args.flag("new") {
+        if var live = liveSession(forBundleId: bid) {
+            let before = live.windowId
+            _ = refreshSessionWindow(&live)
+            saveSession(live)
+            let out: [String: Any] = [
+                "ok": true, "reused": true, "session": live.toDict(),
+                "permissions": ["accessibility": p.accessibility, "screenRecording": p.screenRecording,
+                                "postEvent": p.postEvent],
+                "ableToCapture": p.screenRecording,
+                "note": "复用了活着的会话，没有重新初始化窗口（id 与 \(before == live.windowId ? "窗口" : "窗口已刷新") 保持一致）"
+            ]
+            if gJSONMode { emit(out) } else {
+                emitText("♻️ 复用会话 \(live.id) → \(live.appName) pid \(live.pid) window \(live.windowId)"
+                         + "（没有重新初始化）")
+            }
+            exit(0)
+        }
+    }
+
+    var s = createSession(app: app, bundleId: bid, args: args)
+    let out: [String: Any] = [
+        "ok": true, "reused": false, "session": s.toDict(),
+        "permissions": ["accessibility": p.accessibility, "screenRecording": p.screenRecording,
+                        "postEvent": p.postEvent],
+        "ableToCapture": p.screenRecording,
+        "note": "会话已建立；后续用 --id \(s.id) 或 --app \(bid) 复用同一引擎，不必重复解析窗口。"
+    ]
+    if gJSONMode { emit(out) } else {
+        emitText("✅ 会话 \(s.id) → \(s.appName) (\(s.bundleId)) pid \(s.pid) window \(s.windowId) \(Int(s.windowFrame.width))x\(Int(s.windowFrame.height))")
+        emitText("   后续：wbcu session inspect --id \(s.id)（或直接用 --app \(bid)）")
+        if !p.screenRecording { emitText("   ⚠️ 屏幕录制未授权：capture 会失败，但 AX 操作仍可用") }
+    }
+    exit(0)
+}
+
+/// 真正建会话。sessionStart 与 `--app` 寻址共用这一条路径。
+func createSession(app: NSRunningApplication, bundleId bid: String, args: Args) -> SessionState {
     let pid = app.processIdentifier
     enforceGuard(pid: pid, action: "session start")
 
@@ -249,29 +317,18 @@ private func sessionStart(_ args: Args) {
 
     let id = "s\(Int(Date().timeIntervalSince1970 * 1000) % 100000)"
     let ghost = !args.flag("no-ghost")
-    var s = SessionState(id: id, bundleId: app.bundleIdentifier ?? token,
-                         appName: app.localizedName ?? token,
+    var s = SessionState(id: id, bundleId: bid,
+                         appName: app.localizedName ?? bid,
                          pid: pid, windowId: wid, windowFrame: frame,
                          createdAt: Date().timeIntervalSince1970,
                          ghostEnabled: ghost, captureCount: 0, actionCount: 0,
                          lastFingerprint: axFingerprint(pid: pid).hash,
                          lastVerification: "not_requested")
-    if ghost { ensureGhostDaemon() }
+    // ghost daemon 拉起是非阻塞的：会话建立不该等一个可视化组件就绪。
+    // 真正第一次 goto 时再等它（那时才需要它画）。
+    if ghost { ensureGhostDaemon(waitForReady: false) }
     saveSession(s)
-
-    let out: [String: Any] = [
-        "ok": true, "session": s.toDict(),
-        "permissions": ["accessibility": p.accessibility, "screenRecording": p.screenRecording,
-                        "postEvent": p.postEvent],
-        "ableToCapture": p.screenRecording,
-        "note": "会话已建立；后续用 --id \(id) 复用同一引擎，不必重复解析窗口。"
-    ]
-    if gJSONMode { emit(out) } else {
-        emitText("✅ 会话 \(id) → \(s.appName) (\(s.bundleId)) pid \(pid) window \(wid) \(Int(frame.width))x\(Int(frame.height))")
-        emitText("   后续：wbcu session inspect --id \(id)")
-        if !p.screenRecording { emitText("   ⚠️ 屏幕录制未授权：capture 会失败，但 AX 操作仍可用") }
-    }
-    exit(0)
+    return s
 }
 
 // MARK: list / state
@@ -409,6 +466,43 @@ private func sessionClick(_ args: Args) {
             emitError(CUError.noPressableElement, "元素 \(idx) 没有坐标")
         }
         targetDesc = ["element": idx]
+
+    } else if let ident = args.str("identifier") {
+        // 按稳定标识点。为什么需要它：
+        // 计算器的清除键标签会在「清除 / 全部清除 / C」之间随输入状态切换，
+        // 按文字找在脏状态下会直接找不到（实测踩过），而 AXIdentifier 是稳定的。
+        learnIdentifier = ident
+        let key = "id:\(ident)"
+        if useExperience, let hit = expLookup(app: s.bundleId, pid: s.pid, intent: "click", label: key) {
+            preResolved = hit.element
+            prePath = hit.entry.path
+            learnRole = hit.entry.role
+            expStatus = "hit(\(hit.entry.status))"
+            resolveMs = hit.resolveMs
+            if let p = axPoint(hit.element, kAXPositionAttribute),
+               let sz = axSize(hit.element, kAXSizeAttribute) {
+                point = CGPoint(x: p.x + sz.width / 2, y: p.y + sz.height / 2)
+            } else {
+                point = CGPoint(x: s.windowFrame.midX, y: s.windowFrame.midY)
+            }
+        } else {
+            expStatus = (useExperience && expStats(app: s.bundleId).entries > 0) ? "miss" : "cold"
+            let snap = walkAX(pid: s.pid, maxDepth: 14, maxNodes: 2000,
+                              includeActions: true, skipMenuBar: true)
+            saveSnapshot(snap)
+            guard let h = snap.items.first(where: { $0.identifier == ident }) else {
+                emitError(CUError.noPressableElement, "没找到 identifier 为「\(ident)」的元素")
+            }
+            learnRole = h.role
+            if learnLabel.isEmpty { learnLabel = h.title.isEmpty ? h.desc : h.title }
+            snapBefore = snap
+            if let el = elementAt(pid: s.pid, path: h.path) { preResolved = el; prePath = h.path }
+            guard let pos = h.pos, let sz = h.size else {
+                emitError(CUError.noPressableElement, "元素没有坐标")
+            }
+            point = CGPoint(x: pos.x + sz.width / 2, y: pos.y + sz.height / 2)
+        }
+        targetDesc = ["identifier": ident, "experience": expStatus]
 
     } else if let text = args.str("text") {
         learnLabel = text

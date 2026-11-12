@@ -66,7 +66,7 @@ make_overlay_bundle() {
 <key>CFBundleIdentifier</key><string>com.workbuddy.thirdhand.overlay</string>
 <key>CFBundleExecutable</key><string>wbcu</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.4.2</string>
+<key>CFBundleShortVersionString</key><string>0.5.0</string>
 <key>LSUIElement</key><true/>
 <key>LSBackgroundOnly</key><false/>
 <key>NSHighResolutionCapable</key><true/>

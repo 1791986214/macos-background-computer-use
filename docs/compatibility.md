@@ -68,3 +68,45 @@ pid 匹配 && layer==0 && 宽≥120 && 高≥60 && 名称不含 WindowSharingSes
 - 升级 Xcode / Command Line Tools
 - 目标应用大版本更新（尤其 Electron 类）
 - 修改 `Targeted.swift`（事件字段）、`Apps.swift`（主窗口判据）、`Ghost.swift`（层级与坐标）
+
+---
+
+## v0.4.3：未文档化字段的适用边界（写进代码，不靠记忆）
+
+`src/InputDispatcher/LegacyFields.swift`（`EventFieldCompat`）把 51/58/91/92 与
+私有符号 `CGEventSetWindowLocation` 的可靠性收敛成一套可查状态：
+
+| 机制 | 行为 |
+|---|---|
+| 版本闸门 | 只在已验证的大版本（**14 / 15 / 26**）上默认允许「坐标投递优先」 |
+| 未知大版本 | 默认 **AXPress 优先**；某应用在本机成功 ≥2 次后才敢用坐标投递 |
+| 逐应用退让 | 连续 3 次「投递后验证失败」→ 该应用降级为 AX 优先 |
+| 符号缺失 | `CGEventSetWindowLocation` 解析不到 → 坐标路径直接视为不完整，AX 优先 |
+| 复位 | `wbcu compat --reset`；状态存 `~/.wbcu/compat.json` |
+
+查看当前判定：`wbcu compat`（含 OS 大版本、是否已验证、逐应用计数）。
+
+**字段 58 的语义仍未确认**。我们写常量 `12345` 且实测可用，但回读真实物理事件时
+该字段是 5.8e13 量级，说明它不是「固定魔数」语义。**不要据此推断系统行为**，
+也不要把这条经验外推到别的 macOS 版本。
+
+### 大版本升级后的清单
+
+1. `wbcu compat` —— 确认 `osVerified=false`
+2. `tests/integration/matrix-v042.sh` —— 9 例投递矩阵重跑
+3. `tests/regression/occlusion-layers.sh` —— 层级遮挡判定重跑
+4. 通过后再把新大版本加进 `verifiedOSMajors`
+
+---
+
+## v0.4.3：遮挡判定的已知近似
+
+| 近似 | 影响 | 结论 |
+|---|---|---|
+| 遮挡用**窗口矩形**判定，不做像素级判定 | 半透明窗口、圆角窗口会被整体算作遮挡或整体忽略 | 保守方向：宁可少画光标 |
+| 可见比例用 15×15 采样 | ±1 格误差（约 0.4%） | 只用于报告与状态分级，不用于精确断言 |
+| 系统外壳（layer ≥ 20 且面积 ≥ 屏幕 55%）不参与面积 | Dock 实测报 `1470×956` 全屏 bounds，按矩形算会让所有窗口「被遮挡」 | 在报告里单列 `suspectedShell` |
+| 只比较「同一 Space 内的屏上窗口」 | 其它 Space 的窗口不可见，判定为 `off_screen` | 未做真机跨 Space 验证（Not Tested） |
+
+排查一条遮挡判定时，直接用 `wbcu occlusion --window <id> --x <x> --y <y>`，
+输出里会列出完整 z 序与每个候选遮挡者的 layer / alpha / bounds。

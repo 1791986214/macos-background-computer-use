@@ -359,6 +359,38 @@ wbcu guard --app com.apple.calculator --allow     # 按应用授权（第二道�
 完整说明（含 TCC 归因到「责任进程」这个坑）：[`docs/permissions.md`](docs/permissions.md)。
 升级 / 卸载 / 换机恢复：[`docs/installation.md`](docs/installation.md)。
 
+## 🎯 怎么证明「点对了」（v0.4.3）
+
+「UI 变了」不等于「做对了」。每个动作可以带一个**期望状态**，引擎按四分类给结论：
+
+| 结论 | 含义 | 置信度 |
+|---|---|---|
+| `success` | 确认产生了预期结果 | .95 |
+| `already_satisfied` | 操作前就已满足（幂等） | .60（不声称点击被消费） |
+| `failure` | 结果与期望不一致 | .95 |
+| `inconclusive` | 证据不足（读不到状态 / 没给期望） | .30 |
+
+```bash
+wbcu session click --id $SID --text "7" --exact \
+  --expect 7 --expect-el role:AXStaticText
+# → result=success  expected="7"  actual="7"  confidence=0.95
+```
+
+真机实测（Calculator）：点 7 期望 7 → `success`；点 8 期望 7 → `failure`（能抓到误点）；
+幂等「全部清除」→ `already_satisfied`。细节：[`docs/receipt-v0.4.3.md`](docs/receipt-v0.4.3.md)。
+
+## 🧵 用户在用电脑时还成不成立（v0.4.3）
+
+`tests/concurrency/` 用 listen-only 事件 tap 记录用户真实输入，再对每次前台变化做**责任归因**
+（前 0.4s 内有用户输入 → 用户；脚本登记 → harness；否则 → Agent）：
+
+| 场景 | 用户输入事件 | Agent 动作 | 归因 Agent | 会话流合成事件 |
+|---|---|---|---|---|
+| AX 优先 | 968 条 | 8/8 | **0** | 0 |
+| 强制坐标投递 + 中途切前台 | 977 条 | 8/8 | **0** | 0 |
+
+没有真实用户输入时，这条测试记 `Not Tested`，不给「通过」。
+
 ## ⚡ 性能与经验记忆（2.0）
 
 ### 同一台机器、同一套动作的 A/B
@@ -368,9 +400,12 @@ Calculator，同样 5 步操作 × 6 轮 = 30 次点击，端到端墙钟（含�
 | 版本 | P50 | P95 | 做法 |
 |---|---|---|---|
 | v0.3.0 | 995 ms | 1019 ms | 每步固定 `usleep` 700ms，每次全树遍历两次 |
-| **v0.4.0** | **108 ms** | **124 ms** | 去掉固定睡眠、光标解耦、经验命中、单次验证 |
+| v0.4.0 | 108 ms | 124 ms | 去掉固定睡眠、光标解耦、经验命中、单次验证 |
+| **v0.4.3** | **73.9 ms** | **85.4 ms** | 焦点取证按需、有期望时不扫整树、光标反馈出计时 |
 
-**P50 −89%，P95 −88%。**
+**相对 v0.3.0：P50 −93%，P95 −92%。**
+v0.4.3 在加了「期望状态验证 + 可见性判定」之后仍然更快 ——
+关键是把不属于输入的成本（焦点取证 54ms、整树指纹 60~90ms、光标 socket 往返 70ms）移出关键路径。
 
 ### 时间到底花在哪（先测再改）
 

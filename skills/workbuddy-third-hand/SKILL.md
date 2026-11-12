@@ -66,6 +66,14 @@ wbcu session type --id $SID --text "要填的内容" --element 18
 # 5. 验证：必须读值，不要读 ok
 wbcu session verify --id $SID --expect "42"
 
+# 5b. 更硬的写法：把期望直接挂在动作上（v0.4.3）
+#     result 四分类：success / already_satisfied / failure / inconclusive
+wbcu session click --id $SID --text "7" --exact \
+  --expect 7 --expect-el role:AXStaticText
+# 幂等操作显式声明，避免把「本来就不该变」当成失败
+wbcu session click --id $SID --text "全部清除" --exact \
+  --expect 0 --expect-el role:AXStaticText --idempotent
+
 # 6. 收尾：释放会话（最后一个会话结束时自动隐藏虚拟光标）
 wbcu session end --id $SID
 ```
@@ -126,6 +134,23 @@ AX 语义动作  →  进程级定向投递  →  坐标点击  →  全局 HID�
 - **结束要清理**：`session end`；长任务中断也要 end（或 `wbcu ghost hide` + `session end --all`）。
 
 ---
+
+## 五点五、诊断命令（v0.4.3）
+
+```bash
+wbcu occlusion --window <id> --x <x> --y <y>   # 谁压在目标上面？完整 z 序
+wbcu vis --window <id> --x <x> --y <y>         # 可见性状态（front/background/遮挡/最小化）
+wbcu displays                                   # 显示器几何与缩放
+wbcu compat                                     # 未文档化字段的版本闸门与逐应用退让
+wbcu focus --window <id>                        # keyWindow / 第一响应者
+```
+
+用法要点：
+
+- 点到没反应时，先 `wbcu occlusion` 看是不是被挡了；再 `wbcu vis` 看状态。
+- `result=inconclusive` 不代表成功也不代表失败：给个 `--expect` 再来一次。
+- 跨应用稳定性存疑时看 `wbcu compat`：某应用若被降级（`degraded=true`），
+  说明它连续 3 次投递后验证失败，引擎会自动改为 AX 优先。
 
 ## 六、能力边界（实测，别硬扛）
 

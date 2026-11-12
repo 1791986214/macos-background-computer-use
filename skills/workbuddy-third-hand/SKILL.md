@@ -44,7 +44,7 @@ agent_created: true
 
 ---
 
-## 二、开工前必做的三件事
+## 二、开工前必做
 
 ```bash
 wbcu capabilities --json     # ① 能力与权限：AX / 屏幕录制 / 输入注入各自是否可用
@@ -59,7 +59,8 @@ wbcu session start --app <bundleId> --json   # ④ 建会话（会做授权检�
 
 - 权限不足 → 明确告诉用户缺哪一项、去「系统设置 → 隐私与安全性」开哪个，**不要试图绕过**。
 - 应用不在白名单 → 用 `wbcu guard --app <bundleId> --allow`，且必须**先得到用户对该应用的明确同意**。
-- 会话 id 形如 `s12345`，后续所有动作都带 `--id`，不要每步重新解析窗口。
+- 会话 id 形如 `s12345`。**两种寻址都行**：带 `--id s12345`，或直接 `--app <bundleId>`。
+  后者更省事，而且不会因为「忘了 id」而重建会话。**不要每步重新 `session start`。**
 
 > 中文系统里应用名和 bundle id 不一致：`TextEdit` 叫「文本编辑」，`Calculator` 叫「计算器」。
 > 名字匹配不上就立刻换 bundle id。

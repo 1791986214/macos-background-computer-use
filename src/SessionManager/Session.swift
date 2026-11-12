@@ -485,6 +485,16 @@ private func sessionClick(_ args: Args) {
         opts.observeTimeoutMs = args.int("timeout") ?? (prevFail > 0 ? 150 : 400)
     }
     opts.baselineFingerprint = s.lastFingerprint.isEmpty ? nil : s.lastFingerprint
+    opts.appBundle = s.bundleId
+    // 显式期望（v0.4.3）：`--expect 7 --expect-el role:AXStaticText`
+    // 有它就按「结果对不对」裁决；没有才退回「UI 变没变」的弱判据。
+    if let ev = args.str("expect") {
+        var e = StateExpectation.parse(match: args.str("match"), value: ev,
+                                       hint: args.str("expect-el"))
+        e.idempotent = args.flag("idempotent") ? true : nil
+        e.maxWaitMs = args.int("expect-timeout") ?? 600
+        opts.expectation = e
+    }
     let outcome = performAgentAction(global: point, pid: s.pid, windowId: s.windowId,
                                      windowFrame: s.windowFrame, label: label, options: opts)
 
@@ -497,6 +507,7 @@ private func sessionClick(_ args: Args) {
     // 反例（不学）：targeted 兜底成功但界面没变 —— 无法确认点对了地方。
     let learnedOK = (outcome.changed == true)
         || (outcome.mode == "ax" && outcome.changed == false)
+        || (outcome.result == "already_satisfied")
     if verify, learnedOK, let path = prePath, !learnLabel.isEmpty {
         var learnedObserve = observePath
         if learnedObserve == nil, let before = snapBefore {

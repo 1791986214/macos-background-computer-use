@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-let VERSION = "0.4.2"
+let VERSION = "0.4.3"
 
 func usage() {
     print("""
@@ -109,6 +109,10 @@ case "click": cmdClick(args)
 case "ghost": cmdGhost(args)
 case "act": cmdAct(args)
 case "vis": cmdVis(args)
+case "occlusion": cmdOcclusion(args)
+case "displays": cmdDisplays(args)
+case "compat": cmdCompat(args)
+case "focus": cmdFocus(args)
 case "move": cmdMove(args)
 case "drag": cmdDrag(args)
 case "scroll": cmdScroll(args)

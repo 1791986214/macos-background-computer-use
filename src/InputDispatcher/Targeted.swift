@@ -245,6 +245,13 @@ struct ActionOptions {
     /// 会话里上一次已知的整树指纹。用于「观测元素没变」时的兜底，
     /// 只扫一次树即可判断「别处有没有变」，比前后各扫一次省一半。
     var baselineFingerprint: String? = nil
+    /// v0.4.3：显式期望。「做对了没有」由它裁决，而不是靠「UI 变没变」猜。
+    var expectation: StateExpectation? = nil
+    /// 目标应用的 bundleId（兼容层按应用退让，需要它）
+    var appBundle = ""
+    /// 是否做焦点取证。每次 AX IPC 实测 ~27ms，两次就是 54ms，
+    /// 属于诊断而非必需 —— 默认关闭，并发/隔离类测试用 `--focus-check` 打开。
+    var trackFocus = false
 }
 
 struct ActionOutcome {
@@ -270,12 +277,26 @@ struct ActionOutcome {
     var failureReason = ""
     /// 动手之前目标窗口处于什么状态
     var visibility = VisibilityReport()
-    /// 用户的当前前台 App 有没有被顶掉
-    var frontAppPreserved = true
-    /// 物理鼠标有没有被挪动
-    var physicalCursorPreserved = true
+    /// 用户的当前前台 App 有没有被顶掉。
+    /// nil = 动作期间检测到真实硬件输入 → 变化归属不明，不做断言（不是失败）
+    var frontAppPreserved: Bool? = true
+    /// 物理鼠标有没有被挪动。nil 同上
+    var physicalCursorPreserved: Bool? = true
+    /// 动作窗口内是否有真实硬件输入（用于解释上面两个 nil）
+    var userInputDuringAction = false
     var frontBefore = ""
     var frontAfter = ""
+
+    // ── v0.4.3：期望状态验证 + 焦点取证 ──────────────────────
+    /// 四分类结论：success / already_satisfied / failure / inconclusive
+    var verifyReport: VerifyReport? = nil
+    /// 与 verifyReport.result 同义的短名，便于 CLI 直接打
+    var result = "inconclusive"
+    var focusBefore: FocusState? = nil
+    var focusAfter: FocusState? = nil
+    /// 目标应用的 keyWindow 有没有被我们改掉
+    /// 目标 keyWindow/第一响应者是否保持。nil = 未做焦点取证（不宣称）
+    var targetFocusPreserved: Bool? = nil
 }
 
 func performAgentAction(global point: CGPoint,
@@ -303,10 +324,30 @@ func performAgentAction(global point: CGPoint,
         frontPid: frontAppBefore?.processIdentifier)
     out.timing.visibility = msSince(tVis)
 
+    // ---- ①b 焦点取证：用户的键盘焦点有没有被动过 ----
+    // 只看 frontmostApp 不够：应用还在前台，但 key window / 第一响应者被换掉，
+    // 用户立刻就能感觉到（打字跑进别的窗口）。
+    let tFocus = nowNs()
+    if options.trackFocus { out.focusBefore = FocusProbe.read(pid: pid) }
+
+    // ---- ①c 兼容层：这个应用该不该「AX 优先」 ----
+    // 未验证的 macOS 大版本、或连续投递失败 3 次被降级过的应用，
+    // 一律先试 AXPress（可验证），坐标投递只作兜底。
+    let allowAXNow = options.allowAX || EventFieldCompat.preferAX(app: options.appBundle)
+
+    // ---- ①d 期望状态的前置读数 ----
+    // 必须在投递之前读，否则「本来就满足」和「点了才满足」分不开。
+    var preState: ElementReadout? = nil
+    if let exp = options.expectation, exp.value != nil {
+        let (pre, _) = ExpectedStateVerifier.locate(pid: pid, hint: exp.elementHint)
+        preState = pre
+    }
+    out.timing.focus = msSince(tFocus)
+
     // ---- ② 定位目标元素 ----
     var tMark = nowNs()
     var element = options.preResolved
-    if element == nil, options.allowAX {
+    if element == nil, allowAXNow {
         element = findPressableElement(pid: pid, at: point)
     }
     out.timing.resolve = msSince(tMark)
@@ -331,12 +372,14 @@ func performAgentAction(global point: CGPoint,
     }
 
     // ---- ③ 投递输入 ----
-    tMark = nowNs()
+    // 指纹要在计时之外扫：它是「验证」的成本，不该算进「投递」。
+    // 有显式期望时干脆不扫整树 —— 状态元素的前后读数已经能判断变化，省 60~90ms。
     var fpBefore: (String, Int)? = nil
-    if options.verify && options.observeElement == nil {
-        // 只有走指纹兜底时才需要先扫一遍树
-        fpBefore = axFingerprint(pid: pid)
-    }
+    let hasExplicitExpect = !(options.expectation?.value ?? "").isEmpty
+    let needFingerprint = options.verify && options.observeElement == nil
+        && !hasExplicitExpect && options.baselineFingerprint == nil
+    if needFingerprint { fpBefore = axFingerprint(pid: pid) }
+    tMark = nowNs()
 
     if let el = element {
         let r = AXUIElementPerformAction(el, kAXPressAction as CFString)
@@ -355,8 +398,10 @@ func performAgentAction(global point: CGPoint,
         out.mode = "targeted"
         out.delivered = true
     }
-    if options.showCursor { _ = ghostPress(label) }
     out.timing.dispatch = msSince(tMark)
+    // 光标按下反馈是「可视化」动作，走 socket 到 daemon，实测 50~70ms。
+    // 它不属于输入路径，不能算进 dispatch —— 否则每次点击都被虚报成慢 70ms。
+    if options.showCursor { _ = ghostPress(label) }
 
     // ---- ④ 验证 ----
     // 两级策略：
@@ -377,6 +422,14 @@ func performAgentAction(global point: CGPoint,
                 out.observeStale = true
             }
         }
+        if !resolved, hasExplicitExpect, let pre = preState, pre.found {
+            // 有显式期望：重读一次状态元素判断「有没有变」，不扫整树（省 60~90ms）
+            let now = ExpectedStateVerifier.readPath(pid: pid, path: pre.path)
+            out.changed = now.found && ExpectedStateVerifier.normalize(now.stateValue)
+                != ExpectedStateVerifier.normalize(pre.stateValue)
+            out.via = "ax-state-diff"
+            resolved = true
+        }
         if !resolved {
             let after = axFingerprint(pid: pid)
             out.fingerprintAfter = after.hash
@@ -390,27 +443,100 @@ func performAgentAction(global point: CGPoint,
         }
         out.verification = out.changed == nil ? "not_requested"
             : (out.changed! ? "changed" : "no_observable_change")
+
+        // ④b 期望状态裁决：有显式期望时，它覆盖「变没变」这条弱判据。
+        //     这才是「点 7 看是不是 7」——变了但不是 7，就是失败。
+        if let exp = options.expectation {
+            var pre = preState ?? ElementReadout(found: false)
+            var actual = ElementReadout(found: false)
+            if pre.found, let want = exp.value, !want.isEmpty {
+                let (a, waited) = ExpectedStateVerifier.waitFor(
+                    pid: pid, path: pre.path, expected: want,
+                    mode: exp.match, timeoutMs: exp.maxWaitMs)
+                actual = a
+                if waited > 0 { out.via = out.via.isEmpty ? "ax-state" : out.via + "+ax-state" }
+            } else if pre.found {
+                // 只给了「变了」类期望：读一次当前值作为 actual
+                actual = ExpectedStateVerifier.readPath(pid: pid, path: pre.path)
+            }
+            // 前置状态在投递前读过；若没读到，说明状态元素定位失败 → 如实标 inconclusive
+            if !pre.found { pre = ElementReadout(found: false) }
+            out.verifyReport = ExpectedStateVerifier.evaluate(
+                expectation: exp, pre: pre, actual: actual,
+                changed: out.changed, delivered: out.delivered,
+                failureReason: out.changed == false ? failureReasonFor(out) : "",
+                targetDesc: "\(options.appBundle)#\(windowId)@(\(Int(point.x)),\(Int(point.y)))",
+                actionDesc: "\(out.mode)\(out.escalated ? "(escalated)" : "")")
+        }
     }
     out.timing.verify = msSince(tMark)
 
-    // ---- ⑤ 裁决：投递 ≠ 成功 ----
-    //   changed == true   → 成功
-    //   changed == false  → 投递成功但目标 UI 没动 → 判定失败，并给出具体原因
-    //   changed == nil    → 未要求验证，只能算「已投递」
-    // 以前这里无论 changed 是什么都返回 ok:true，于是「点了没反应」被伪装成成功。
-    if let c = out.changed {
-        out.ok = c
-        if !c { out.failureReason = failureReasonFor(out) }
-    } else {
-        out.ok = out.delivered
+    // ---- ⑤ 裁决 ----
+    // v0.4.3：裁决权交给 ExpectedStateVerifier，四分类：
+    //   success / already_satisfied / failure / inconclusive
+    // 老的「变了就算成功、没变就算失败」只在没有显式期望时作为弱判据存在，
+    // 且「没变」现在给的是 inconclusive —— 因为幂等操作本来就该没变化。
+    if out.verifyReport == nil {
+        var pre = ElementReadout(found: false)
+        var actual = ElementReadout(found: false)
+        if let exp = options.expectation, preState?.found == true {
+            pre = preState!
+            actual = ExpectedStateVerifier.readPath(pid: pid, path: pre.path)
+        }
+        out.verifyReport = ExpectedStateVerifier.evaluate(
+            expectation: options.expectation ?? StateExpectation(),
+            pre: pre, actual: actual, changed: out.changed, delivered: out.delivered,
+            failureReason: out.changed == false ? failureReasonFor(out) : "",
+            targetDesc: "\(options.appBundle)#\(windowId)@(\(Int(point.x)),\(Int(point.y)))",
+            actionDesc: out.mode)
+    }
+    out.result = out.verifyReport?.result.rawValue ?? "inconclusive"
+    out.ok = out.verifyReport?.result.ok ?? false
+    if !out.ok && out.failureReason.isEmpty {
+        out.failureReason = out.changed == false ? failureReasonFor(out)
+            : (out.delivered ? "verification_inconclusive" : "not_delivered")
+    }
+
+    // ---- ⑥ 焦点自检：目标的 keyWindow 有没有被我们改掉 ----
+    if options.trackFocus {
+        out.focusAfter = FocusProbe.read(pid: pid)
+        if let b = out.focusBefore, let a = out.focusAfter, b.readable, a.readable {
+            out.targetFocusPreserved = (b.keyWindowId == a.keyWindowId)
+                && (b.focusedRole == a.focusedRole)
+                && (b.focusedIdentifier == a.focusedIdentifier)
+        }
+    }
+
+    // ---- ⑦ 兼容层记账：坐标投递到底靠不靠得住 ----
+    if out.mode == "targeted", !options.appBundle.isEmpty {
+        let good = (out.result == "success")
+        EventFieldCompat.record(app: options.appBundle, targetedVerified: good)
     }
 
     // ---- ⑥ 硬约束自检：有没有动到不该动的东西 ----
     out.frontAfter = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-    out.frontAppPreserved = (out.frontBefore == out.frontAfter)
     let mouseAfter = CGEvent(source: nil)?.location ?? .zero
-    out.physicalCursorPreserved = hypot(mouseAfter.x - mouseBefore.x,
-                                        mouseAfter.y - mouseBefore.y) < 1.5
+    let moved = hypot(mouseAfter.x - mouseBefore.x, mouseAfter.y - mouseBefore.y)
+    let elapsedSec = out.timing.total > 0 ? out.timing.total / 1000 : 0.2
+
+    // 动作窗口内有没有**真实硬件**输入？
+    // 有的话，「鼠标动了」「前台变了」都可能只是用户自己在动/在切 ——
+    // 这时候断言「是我动的」是错的，断言「不是我动的」也无从证明。
+    // 我们的合成事件走 postToPid，不进 HID 流，所以这个探针只统计真实输入。
+    let sinceMove = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .mouseMoved)
+    let sinceClick = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .leftMouseDown)
+    let sinceKey = CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: .keyDown)
+    let userBusy = min(sinceMove, sinceClick, sinceKey) < elapsedSec + 0.05
+    out.userInputDuringAction = userBusy
+
+    if userBusy {
+        // 归属不明：不宣称「保持」，也不宣称「破坏」
+        out.frontAppPreserved = (out.frontBefore == out.frontAfter) ? true : nil
+        out.physicalCursorPreserved = moved < 1.5 ? true : nil
+    } else {
+        out.frontAppPreserved = (out.frontBefore == out.frontAfter)
+        out.physicalCursorPreserved = moved < 1.5
+    }
 
     if options.showCursor {
         _ = ghostFeedback(out.changed ?? true, out.changed == false ? "no change" : label)
@@ -464,14 +590,20 @@ func actionReport(_ o: ActionOutcome, windowId: CGWindowID, pid: pid_t,
         "verification": o.verification,
         "verifyVia": o.via,
         "visibility": o.visibility.dict,
-        "frontAppPreserved": o.frontAppPreserved,
         "frontBefore": o.frontBefore,
         "frontAfter": o.frontAfter,
-        "physicalCursorPreserved": o.physicalCursorPreserved,
-        "pointerMoved": !o.physicalCursorPreserved,
+        "physicalCursorPreserved": o.physicalCursorPreserved.map { $0 as Any } ?? NSNull(),
+        "frontAppPreserved": o.frontAppPreserved.map { $0 as Any } ?? NSNull(),
+        "userInputDuringAction": o.userInputDuringAction,
+        "pointerMoved": o.physicalCursorPreserved == false,
+        "result": o.result,                   // success / already_satisfied / failure / inconclusive
+        "targetFocusPreserved": o.targetFocusPreserved.map { $0 as Any } ?? NSNull(),
         "timing": o.timing.dict()
     ]
     if let c = o.changed { r["uiChanged"] = c }
+    if let f = o.focusBefore { r["focusBefore"] = f.dict }
+    if let f = o.focusAfter { r["focusAfter"] = f.dict }
+    if let rep = o.verifyReport { r["verificationReport"] = rep.dict }
     return r
 }
 
@@ -550,8 +682,19 @@ func cmdGhost(_ args: Args) {
         emitText("✅ Agent Cursor 已就绪 (\(GHOST_SOCK_PATH))")
         exit(0)
     case "move", "goto":
-        let r = ghostGoto(global: CGPoint(x: args.dbl("x") ?? 0, y: args.dbl("y") ?? 0),
+        // 支持窗口锚定模式：--window <id> --localX --localY
+        // （锚定才是生产路径；之前 CLI 只暴露全局模式，测试想验锚定行为只能绕道 act）
+        var r: [String: Any]? = nil
+        if let wid = args.int("window"), wid > 0,
+           let lx = args.dbl("localX"), let ly = args.dbl("localY") {
+            let p = pidForWindow(CGWindowID(wid)) ?? 0
+            r = ghostGoto(window: CGWindowID(wid), local: CGPoint(x: lx, y: ly),
+                          animated: args.flag("animate"), label: args.str("label") ?? "",
+                          pid: p)
+        } else {
+            r = ghostGoto(global: CGPoint(x: args.dbl("x") ?? 0, y: args.dbl("y") ?? 0),
                           animated: args.flag("animate"), label: args.str("label") ?? "")
+        }
         if gJSONMode { emit(r ?? ["ok": false]) } else { emitText("✅ cursor → (\(args.dbl("x") ?? 0), \(args.dbl("y") ?? 0))") }
         exit(0)
     case "click":
@@ -610,6 +753,17 @@ func cmdAct(_ args: Args) {
     opts.verify = verify
     opts.allowAX = allowAX
     opts.cursorMode = (args.str("ghost-mode") ?? "fast").lowercased()
+    opts.appBundle = NSRunningApplication(processIdentifier: pd)?.bundleIdentifier ?? ""
+    opts.trackFocus = args.flag("focus-check")
+    // 显式期望：`--expect 7 --expect-el role:AXStaticText`
+    // 给了它，「成功」就是「真的变成 7」，而不是「有东西变了」
+    if let ev = args.str("expect") {
+        var e = StateExpectation.parse(match: args.str("match"), value: ev,
+                                       hint: args.str("expect-el"))
+        e.idempotent = args.flag("idempotent") ? true : nil
+        e.maxWaitMs = args.int("expect-timeout") ?? 600
+        opts.expectation = e
+    }
     let outcome = performAgentAction(global: p, pid: pd, windowId: w, windowFrame: f,
                                      label: label, options: opts)
     let res = actionReport(outcome, windowId: w, pid: pd, point: p, frame: f)
@@ -618,8 +772,11 @@ func cmdAct(_ args: Args) {
         let cur = (outcome.cursorInfo["used"] as? Bool) ?? false
         let mark = outcome.ok ? "✅" : "❌"
         emitText("\(mark) \(outcome.mode) @(\(Int(p.x)),\(Int(p.y)))  cursor=\(cur ? "shown" : "off")  "
-                 + "verify=\(outcome.verification)  \(Int(outcome.timing.total))ms"
+                 + "result=\(outcome.result)  verify=\(outcome.verification)  \(Int(outcome.timing.total))ms"
                  + (outcome.failureReason.isEmpty ? "" : "  原因=\(outcome.failureReason)"))
+        if let rep = outcome.verifyReport, !rep.notes.isEmpty {
+            emitText("   期望=\(rep.expectedDesc)  \(rep.notes.joined(separator: "；"))")
+        }
         if !outcome.visibility.note.isEmpty {
             emitText("   窗口状态：\(TargetWindowVisibilityManager.humanNote(outcome.visibility))")
         }

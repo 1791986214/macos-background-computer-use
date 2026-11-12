@@ -207,19 +207,52 @@ WorkBuddy Agent
 
 ## 10. Git、版本与维护
 
-- 分支：`feat/nonblocking-refinement`（从 `feat/v0.4.3-reliability-audit` 切出，包含 v0.4.2 全部能力 + v0.4.3 审计改动）
-- 版本：`0.5.0`（`wbcu version` 可查）
-- 回滚：`git checkout v0.4.2` 或直接 `git revert` 本分支的提交；二进制不覆盖安装即可保持旧版
-- **未自动安装到 `~/.local/bin`**（沿用上一轮「不覆盖稳定安装」的约定）。要装：
+### 10.1 当前实际状态（2026-11-12 15:50 核验）
+
+| 项 | 值 |
+|---|---|
+| 远端 `main` | `17a0d4c`（PR #6 已合并） |
+| 本地 `main` | `17a0d4c`（一致，工作区干净） |
+| 标签 `v0.5.0` | `17a0d4c`（已推送，轻量标签） |
+| 标签 `v0.4.2` | `5f9081e`（本次补推；之前只存在于本地） |
+| 已安装二进制 | `~/.local/bin/wbcu` = **0.5.0**，sha256 前缀 `afd4e5b96366580a` |
+| 已安装技能 | `~/.workbuddy/skills/workbuddy-third-hand/SKILL.md` = **231 行**（含 v0.5.0 路由） |
+| 覆盖层 | `~/.local/share/wbcu/ThirdHandOverlay.app`（LSUIElement） |
+
+安装命令（本次已执行）：
 
 ```bash
-cd /Users/lang/WorkBuddy/macos-background-computer-use && bash scripts/install.sh
+cd /Users/lang/WorkBuddy/macos-background-computer-use && bash scripts/install.sh --skill
 ```
 
-### 后续维护要点
+> 坑：`install.sh` 默认只装二进制，**技能要显式带 `--skill`**。
+> 第一次漏了这个参数，结果是二进制升到 0.5.0、技能还停在 0.4.2（177 行），
+> 技能里会教 `wbcu launch` 这种不存在的命令。已修正。
+> 复核方式：`wc -l ~/.workbuddy/skills/workbuddy-third-hand/SKILL.md`（应为 231）。
+
+### 10.2 安装后冒烟
+
+```
+~/.local/bin/wbcu version                → 0.5.0
+~/.local/bin/wbcu launch --app com.apple.calculator --json
+                                        → ok:true, alreadyRunning:true, activated:false
+~/.local/bin/wbcu session click --app com.apple.calculator --identifier Two --json
+                                        → ok:true, method:ax, result:success
+~/.local/bin/wbcu trace status          → · 未追踪
+```
+
+### 10.3 回滚
+
+```bash
+git checkout v0.4.2 && bash scripts/install.sh --skill   # 回到 v0.4.2 行为
+git revert 17a0d4c                                     # 撤掉合并
+```
+
+### 10.4 后续维护要点
 
 1. **新命令**：`wbcu trace start|report|stop|mark`、`wbcu launch --app <id> [--foreground]`
 2. **新参数**：`session start --new`、`session <子命令> --app <bundleId>`、`session click --identifier <id>`、`--expect-el role:X[n]`
 3. 遇到「又抢前台」的报告，第一步永远是 `wbcu trace start` → 复现 → `wbcu trace report`，
    看归因是 `wbcu` / `external` / `user`，再决定改哪里
 4. `external` 归因出现时，先查是否有人（Agent 自己）在任务里用了 `open -a` / `osascript activate`
+5. 发布流程：**直接 commit 到 main 并 push**，不再建 PR（用户 2026-11-12 明确要求）

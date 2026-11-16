@@ -112,3 +112,36 @@ TCC 授权需要单独撤销（`tccutil reset ...`），见 `permissions.md`。
 7. `./tests/run-all.sh unit` 自检
 
 **不要**跨机拷贝 `~/.wbcu/sessions/`（里面存的是 pid 与窗口号，换了机器全是废的）。
+
+---
+
+## 发布源（三个，改完都要同步）
+
+技能与引擎有三个「源」，任何一次更新都要一起走，否则会出现「某处还是旧版」：
+
+| 源 | 位置 | 更新方式 |
+|---|---|---|
+| 本地 | `~/.workbuddy/skills/workbuddy-third-hand/` | `bash scripts/install.sh`（默认含技能） |
+| GitHub | `github.com/1791986214/macos-background-computer-use`（`skills/workbuddy-third-hand/`） | `git add -A && git commit && git push origin main` |
+| 乐享知识库 | 空间「AI 与 机器人」→ 文件夹「桌面自动化与 Computer Use」→《Skill｜Third Hand（workbuddy-third-hand）》 | 见下 |
+
+### 乐享落点（固定 ID，别再翻）
+
+- space_id：`6357101d8b7a45eb85677b7e58dca393`（AI 与 机器人）
+- 分类文件夹：`3491fe41113649549ec20383abd9136a`（桌面自动化与 Computer Use）
+- 技能条目：`f169fecaf82f48f3ab8a8005aaf6efcf`（kb_file，md）
+
+更新乐享时用 `file_import_markdown`：**传 `entry_id` 覆盖**（保留标题与节点身份），
+不要新建——新建会多出一份旧的，反而更乱。首次创建才用 `parent_entry_id`。
+
+### 一致性自检
+
+```bash
+wbcu doctor                      # 本地二进制 vs 技能版本
+diff -r skills/workbuddy-third-hand ~/.workbuddy/skills/workbuddy-third-hand
+git hash-object skills/workbuddy-third-hand/SKILL.md \
+  && git rev-parse origin/main:skills/workbuddy-third-hand/SKILL.md
+```
+
+乐享那边的正文比 SKILL.md 精简（去掉 CLI 细节，保留用法、能力边界、版本记录），
+所以不能用 hash 比对，只能按「版本号 + 更新日期」核对。

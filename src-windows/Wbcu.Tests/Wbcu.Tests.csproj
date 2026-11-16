@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    纯逻辑单元测试：目标框架 net8.0（不是 net8.0-windows），
+    所以它在 macOS、Linux、windows-latest 上都能跑。
+    这一点很重要——它让「跨平台语义一致」成为可验证的事实，而不是口头承诺。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Wbcu.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wbcu.Contract\Wbcu.Contract.csproj" />
+  </ItemGroup>
+
+</Project>

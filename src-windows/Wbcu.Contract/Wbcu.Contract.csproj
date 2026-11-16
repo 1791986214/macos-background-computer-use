@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Wbcu.Contract —— 跨平台契约层。
+    这里刻意不引用任何 Windows / macOS 专属 API：纯 net8.0，
+    因此可以在 macOS 上 `dotnet test`，也可以在 windows-latest CI 上跑。
+    它是 macOS 引擎（Swift）与 Windows 引擎（C#）之间唯一共享的「语义定义」。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Wbcu.Contract</RootNamespace>
+    <AssemblyName>Wbcu.Contract</AssemblyName>
+  </PropertyGroup>
+
+</Project>

@@ -5,6 +5,62 @@
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-16
+
+**macOS 引擎保持 v0.5.x 的成熟行为（仅新增 `contract` 命令），新增 Windows 原生引擎，
+两者共享同一份跨平台契约与同一个技能。**
+
+这是「磨刀阶段」的跨平台第一步：不是把 Swift 翻成 C#，而是**为 Windows 重写执行层、
+共用语义层**。定位仍然是 WorkBuddy 的第三只手——不加审批、不加阻塞、不做前台守卫。
+
+### 新增：跨平台契约（`contract/`）
+
+- `wbcu contract --json` / `wbcu.exe contract --json` 输出同一份可执行契约：
+  11 个统一动作、17 个错误码、验证四分类、6 种匹配模式、15 个能力键、选择器语法、6 条不可违反的纪律。
+- `./scripts/check-contract-parity.sh` 逐字对比两侧 → 当前 `PARITY OK`。
+- 结果信封统一：`ok / action / platform / engine / method / delivered / verified /
+  verification / failureReason / errorCode / frontAppPreserved / physicalCursorPreserved /
+  elapsedMs / data / warnings`。
+
+### 新增：Windows 引擎（`src-windows/`，wbcu.exe）
+
+| 模块 | 实现 | 说明 |
+|---|---|---|
+| 窗口/应用发现 | `EnumWindows` + `DwmGetWindowAttribute` + 包族/AUMID | 用 extended frame bounds 避免 Win10 隐形边框导致坐标偏移 |
+| 捕获 | Windows.Graphics.Capture（D3D11 读回）+ PrintWindow 兜底 | 最小化/DRM 内容如实报失败，不假装截到黑图 |
+| UIA | `Interop.UIAutomationClient`（官方 COM 互操作）+ 专用 MTA 线程 | **不手写 vtable**；超时抛 `timeout`，不挂死调用方 |
+| 定向输入 | UIA Pattern → `SendMessageTimeout`（最深子窗口）→ 显式 `SendInput` | 三级阶梯，失败说清卡在哪一级 |
+| Ghost Cursor | 独立进程 + `WS_EX_LAYERED` + `UpdateLayeredWindow` | NOACTIVATE/TRANSPARENT/TOOLWINDOW，点击穿透、跟随窗口、被遮挡变淡 |
+| 会话 | JSON 持久化 + HWND/PID 校验 | 句柄被复用 → `session_stale`，不拿死句柄硬点 |
+| 验证 | UIA 状态读数 + 树指纹 + 「值出现在别处」兜底 | 四分类与 macOS 同判据 |
+| 经验 | 只存 AutomationId/路径/名称 | 坐标与 HWND 不进长期库 |
+| 追踪 | `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` | 命令时间窗归因，区分 wbcu / user / external |
+
+### 新增：Windows 测试与构建
+
+- `Wbcu.Tests`：65 个纯逻辑单测（契约/验证四分类/选择器/归一化/几何/光标光栅/PNG/经验），
+  **在 macOS 与 CI 上均通过**。
+- `Wbcu.TestApp`（WPF，纯代码）与 `Wbcu.TestApp.Win32`（原生控件 + 自绘画布）作为受控目标。
+- `Wbcu.GuiTests`：交互式验收套件（UIA 点击 / 后台点击 / 遮挡点击 / 消息投递 / 后台输入 /
+  用户并发 / 覆盖层 / 最小化 / 多屏 DPI），**只能在有交互桌面的 Windows 上跑**。
+- `build.ps1` / `install.ps1` / `uninstall.ps1` / `scripts/pack-windows.sh`；
+  安装脚本**探测**技能目录而不是假设 `~/.workbuddy` 在 Windows 上等价。
+- CI 新增 `windows-build-and-unit-test`：编译 + 单测 + 发布 win-x64；
+  GUI 验收明确**不在 CI 跑**（`gui-acceptance-note` 说明原因）。
+
+### 修正
+
+- `docs/windows-feasibility.md` 的「Windows 不可用」结论标注为**已被取代**：
+  结论对「复用 Swift 二进制」仍然成立，但不等于「没有 Windows 版」。
+- 技能升级为双平台单一技能（`version: 0.6.0`），新增平台检测、能力差异表、Windows 专属边界。
+
+### 未验证（不要当成已支持）
+
+真机 GUI 验收（Calculator / 记事本 / 资源管理器、遮挡、并发用户输入、多屏混合 DPI）、
+Graphics Capture 实际取帧质量、Windows on ARM64。
+这些在 `wbcu.exe capabilities --json` 里显示为 `not_tested`，直到 `wbcu-guitests.exe` 在本机全绿。
+
+
 ## [0.5.2] — 2026-11-16
 
 只有一件事：**把「Windows 能不能用」这个问题回答清楚，并写进技能里**。

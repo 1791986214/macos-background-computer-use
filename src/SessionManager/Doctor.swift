@@ -22,7 +22,7 @@ let KNOWN_COMMANDS: [String] = [
     "stream", "click", "ghost", "act", "vis", "occlusion", "displays", "compat",
     "focus", "move", "launch", "drag", "scroll", "key", "type", "activate",
     "window-move", "indicator-scan", "indicator-oneshot", "indicator-exp",
-    "version", "doctor"
+    "version", "doctor", "contract"
 ]
 
 struct DoctorCheck {

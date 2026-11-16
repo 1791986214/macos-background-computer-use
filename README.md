@@ -4,7 +4,14 @@
 
 **让 WorkBuddy 拥有第三只手。**
 
-WorkBuddy 的 macOS 原生桌面操作技能与执行引擎——让 WorkBuddy 能够观察、理解并操作桌面应用，在尽可能不打断用户工作的情况下完成真实任务。
+WorkBuddy 的跨平台桌面操作技能与执行引擎——让 WorkBuddy 能够观察、理解并操作桌面应用，在尽可能不打断用户工作的情况下完成真实任务。
+
+**macOS 与 Windows 双平台，一个技能，两个原生引擎**（共享同一份跨平台契约）：
+
+| 平台 | 引擎 | 二进制 | 底层技术 | 状态 |
+|---|---|---|---|---|
+| macOS 14+ | `macos-ax` | `wbcu` | Accessibility + ScreenCaptureKit + CGEvent 定向投递 | 已实测（v0.5.x 系列） |
+| Windows 10 22H2 / 11 | `windows-uia` | `wbcu.exe` | UI Automation + Windows.Graphics.Capture + 定向窗口消息 | v0.6.0 新实现：编译/单测/契约已验证，**真机 GUI 验收待做** |
 
 > **WorkBuddy 负责思考和决策，Third Hand 负责观察、执行和验证。**
 
@@ -12,10 +19,15 @@ WorkBuddy 的 macOS 原生桌面操作技能与执行引擎——让 WorkBuddy �
 >
 > 你的双手负责自己的工作，第三只手交给 WorkBuddy。
 
-> 🚧 **状态：Experimental（v0.3.0）**
+> 🚧 **状态：Experimental（v0.6.0）**
 >
 > 后台交互能力随 macOS 版本、应用框架与系统授权而不同。
-> **已实测范围见 [`docs/capability-matrix.md`](docs/capability-matrix.md)，未测试的一律标 `Not Tested`，不当作「支持」。**
+> **已实测范围见 [`docs/capability-matrix.md`](docs/capability-matrix.md)（macOS）
+> 与 [`docs/windows-capability-matrix.md`](docs/windows-capability-matrix.md)（Windows），
+> 未测试的一律标 `Not Tested`，不当作「支持」。**
+>
+> 跨平台语义定义（动作名 / 结果结构 / 验证四分类 / 选择器语法）见 [`contract/README.md`](contract/README.md)，
+> 可执行校验：`./scripts/check-contract-parity.sh`。
 
 ![Third Hand 实际运行演示](docs/images/demo.gif)
 

@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 允许在 macOS / Linux 上交叉编译 net8.0-windows 目标（CI 与本机都是这么验证的） -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Version>0.6.0</Version>
+    <Company>WorkBuddy</Company>
+    <Product>WorkBuddy Third Hand</Product>
+    <!-- CA1416: 平台兼容性分析。本仓库的 Windows 引擎整体只在 Windows 运行，
+         由各项目自身的 TFM 保证，不需要逐个 API 加 [SupportedOSPlatform]。 -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

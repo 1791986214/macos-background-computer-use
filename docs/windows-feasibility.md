@@ -1,6 +1,14 @@
 # Third Hand 能不能跑 Windows？——实测结论与移植评估
 
-**结论：不能。** 不是「编译一下」的问题，而是**引擎四层全部绑定 macOS 私有框架**，
+> ⚠️ **本文结论已被 v0.6.0 取代（2026-11-16）**
+>
+> 本文回答的是「**能不能把现有的 Swift 引擎拿到 Windows 上跑**」——答案是仍然不能，下面的证据全部有效。
+> 但它被误读成了「Third Hand 永远没有 Windows 版」，这是错的。
+> v0.6.0 的做法是**为 Windows 新写一个原生引擎**（C# + UI Automation + Graphics Capture），
+> 与 macOS 引擎共享同一份跨平台契约与同一个技能。见
+> [`docs/windows-architecture.md`](windows-architecture.md) 与 [`contract/README.md`](../contract/README.md)。
+
+**结论：不能（指复用 Swift 二进制）。** 不是「编译一下」的问题，而是**引擎四层全部绑定 macOS 私有框架**，
 Windows 版等于重写引擎。下面是证据、移植工作量，以及 Windows 用户现在该用什么。
 
 > 验证日期 2026-11-16 ｜ 引擎 v0.5.2 ｜ 本机 macOS 26.6 / arm64

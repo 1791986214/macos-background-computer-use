@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-let VERSION = "0.5.2"
+let VERSION = "0.6.0"
 
 func usage() {
     print("""
@@ -27,6 +27,7 @@ func usage() {
 
     能力
       wbcu capabilities [--json]                   能力矩阵与权限、错误码清单
+      wbcu contract [--json]                       跨平台契约（动作/错误码/验证口径，与 Windows 引擎同一份）
       wbcu selftest [--json]                       纯逻辑自检（无 GUI / 无 TCC 依赖，CI 用）
 
     权限
@@ -98,6 +99,7 @@ if cmd != "trace" {
 switch cmd {
 case "perm": cmdPerm(args)
 case "capabilities": cmdCapabilities(args)
+case "contract": cmdContract(args)
 case "experience": cmdExperience(args)
 case "bench": cmdBench(args)
 case "perf": cmdPerf(args)

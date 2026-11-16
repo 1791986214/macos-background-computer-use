@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Wbcu.Windows —— Windows 原生引擎（wbcu.exe）
+
+    技术栈选择（不是拍脑袋，是逐项验证过的）：
+      - 目标框架 net8.0-windows10.0.19041.0：拿到 Windows SDK 的 WinRT 投影
+        （Windows.Graphics.Capture / D3D11 interop）。这一层在 macOS 上也能
+        restore + build（EnableWindowsTargeting），所以 CI 与本机都能给出真实编译证据。
+      - UI Automation：用官方 COM 互操作程序集 Interop.UIAutomationClient
+        （CUIAutomation8 / IUIAutomation*），**不手写 vtable**。
+        理由：手写 COM vtable 一旦顺序错一位就是运行时崩溃，而我没有 Windows 真机
+        可以逐个验证。宁可少一点"零依赖"的漂亮，也不要用户机器上的 AV。
+      - D3D11：Vortice.Direct3D11（成熟的托管封装），同样避免手写 ID3D11DeviceContext。
+      - 不引用 WPF/WinForms：Ghost Cursor 用 WS_EX_LAYERED + UpdateLayeredWindow 自绘，
+        引擎保持无 UI 框架依赖，启动更快、体积更小。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <RootNamespace>Wbcu.Windows</RootNamespace>
+    <AssemblyName>wbcu</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Platforms>x64;arm64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <PublishSingleFile>false</PublishSingleFile>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Interop.UIAutomationClient" Version="10.19041.0" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wbcu.Contract\Wbcu.Contract.csproj" />
+  </ItemGroup>
+
+</Project>

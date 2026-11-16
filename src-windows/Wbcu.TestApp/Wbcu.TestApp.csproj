@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>Wbcu.TestApp</RootNamespace>
+    <AssemblyName>wbcu-testapp-wpf</AssemblyName>
+  </PropertyGroup>
+</Project>

@@ -34,3 +34,4 @@ secrets*
 .idea/
 .vscode/
 *.xcodeproj/xcuserdata/
+dist/

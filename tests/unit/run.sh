@@ -78,6 +78,24 @@ else
   ok "shell 变量边界正确（无 \$VAR 紧贴中文）"
 fi
 
+# 2.3b doctor 的命令白名单必须与 main.swift 的 switch 完全一致
+#      （两边漂移会让 doctor 误报「技能引用了不存在的命令」或漏报）
+MAIN_CASES="$(grep -oE '^case "[a-z-]+"' "$SRC/main.swift" | sed 's/case "//;s/"//' | sort)"
+DOC_CASES="$(python3 - "$SRC/SessionManager/Doctor.swift" <<'PY'
+import re,sys
+src=open(sys.argv[1],encoding='utf-8').read()
+m=re.search(r'let KNOWN_COMMANDS: \[String\] = \[(.*?)\]', src, re.S)
+items=re.findall(r'"([a-z-]+)"', m.group(1)) if m else []
+print("\n".join(sorted(set(items))))
+PY
+)"
+if [ "$MAIN_CASES" = "$DOC_CASES" ]; then
+  ok "doctor 命令白名单与 main.swift 一致（$(printf '%s' "$MAIN_CASES" | wc -l | tr -d ' ') 条）"
+else
+  bad "doctor 白名单与 main.swift 不一致："
+  diff <(printf '%s\n' "$MAIN_CASES") <(printf '%s\n' "$DOC_CASES") | head -6 | sed 's/^/       /'
+fi
+
 # 2.4 源码里不得出现「假装成功」的兜底
 if grep -rEn "return true\s*//\s*(忽略|假装|fallback)" "$SRC" 2>/dev/null | head -3 | grep -q .; then
   bad "发现疑似假装成功的兜底"

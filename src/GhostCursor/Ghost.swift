@@ -498,7 +498,20 @@ final class GhostServer {
     }
 }
 
+func ghostPidPath() -> String {
+    stateDir().appendingPathComponent("ghost.pid").path
+}
+
 func runGhostDaemon() {
+    // 记 pid：`ghost stop` 要靠它确认进程真的死了。
+    // 以前 stop 只发 quit + 删 socket 就报「已停止」，进程还在跑（实测踩到）。
+    try? String(getpid()).write(toFile: ghostPidPath(), atomically: true, encoding: .utf8)
+    signal(SIGTERM) { _ in
+        // 收到 TERM 就干净退出；在信号处理里只做 exit，避免和 RunLoop 抢锁
+        unlink(ghostPidPath().cString(using: .utf8)!)
+        exit(0)
+    }
+
     let app = NSApplication.shared
     // ⚠️ 这里不能随便改成 .prohibited。
     //

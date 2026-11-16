@@ -205,16 +205,28 @@ wbcu trace report
 ✅ 0 次前台变化归因于 wbcu 命令
 ```
 
-### 4. 网页交给谁
+### 4. 网页交给谁（v0.5.1 更正）
 
-本构建**没有**给 Agent 暴露浏览器自动化接口，所以：
+v0.5.0 曾断言「没有浏览器接口」——**那是错的**，只查了主 bundle 字符串。
+实际上 WorkBuddy 自带 `agent-browser`（Vercel agent-browser CLI + 官方插件），本机已装可用：
 
 | 目标 | 工具 |
 |---|---|
-| 网页内容读取 / 搜索 | `WebFetch` / `WebSearch` |
+| 网页点击 / 输入 / 滚动 / DOM 读取 / 截图 | **`agent-browser`**（CLI，实测可用） |
+| 网页只读抓取 / 搜索 | `WebFetch` / `WebSearch` |
 | 页面展示 | `present_files`（内置右侧面板） |
-| 网页内点击 / 输入 | **不可用** —— 且不得用坐标点击冒充 |
 | 原生应用 | Third Hand |
+| 混合任务 | 各跑各的，Agent 汇总（实测并行 0 次前台切换） |
+
+```bash
+export PATH="/Users/lang/.workbuddy/binaries/node/versions/22.22.2-6/bin:$PATH"
+agent-browser open https://example.com && agent-browser snapshot
+agent-browser fill "#q" "关键词" && agent-browser click "#go"
+agent-browser get text "#result"      # 读值验证，不要只看 ✓ Done
+agent-browser close
+```
+
+**红线：网页有 DOM 就用 DOM，不要用 `wbcu` 坐标点击去点网页。**
 
 调查方法与全部证据：[`docs/browser-use.md`](docs/browser-use.md)。
 

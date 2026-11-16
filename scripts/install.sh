@@ -1,19 +1,23 @@
 #!/bin/bash
 # install.sh — 把引擎装到用户目录，并（可选）注册 MCP 与技能
 #
-#   ./scripts/install.sh              # 装二进制 + MCP 启动器
-#   ./scripts/install.sh --skill      # 顺带装技能
+#   ./scripts/install.sh              # 装二进制 + MCP 启动器 + 技能（默认全装）
+#   ./scripts/install.sh --no-skill   # 只装二进制，不动技能
 #   ./scripts/install.sh --mcp        # 顺带写入 ~/.workbuddy/mcp.json（会先备份）
+#
+# 为什么技能改成默认装：v0.5.0 出过事故 —— 默认不装技能，结果二进制升到 0.5.0、
+# SKILL.md 还是 0.4.2，技能里教着不存在的命令。安装完会自动跑 wbcu doctor 核对。
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DST="$HOME/.local/bin"
 SHARE="$HOME/.local/share/wbcu"
-WITH_SKILL=0
+WITH_SKILL=1
 WITH_MCP=0
 for a in "$@"; do
   case "$a" in
     --skill) WITH_SKILL=1 ;;
+    --no-skill) WITH_SKILL=0 ;;
     --mcp)   WITH_MCP=1 ;;
     -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
   esac
@@ -99,3 +103,13 @@ case ":$PATH:" in
      echo "⚠️  $BIN_DST 不在 PATH 里，请加入（要放在 /usr/bin 之前）："
      echo "    export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
 esac
+
+# ---- 安装后自检：引擎 / 技能 / 命令引用 / 会话堆积 ----
+if [ -x "$BIN_DST/wbcu" ]; then
+  echo
+  echo "—— 安装自检 ——"
+  # doctor 失败不阻断安装（安装本身已经完成），但必须把问题打出来
+  if ! "$BIN_DST/wbcu" doctor; then
+    echo "⚠️  自检发现不一致：按上面提示处理后重跑 doctor" >&2
+  fi
+fi

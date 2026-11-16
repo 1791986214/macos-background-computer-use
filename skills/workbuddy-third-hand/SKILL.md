@@ -1,5 +1,6 @@
 ---
 name: workbuddy-third-hand
+version: 0.5.1
 description: WorkBuddy Third Hand —— 给 WorkBuddy 的第三只手。用 macOS 原生技术（ScreenCaptureKit + Accessibility + 进程级事件投递 + 独立虚拟光标）在后台操作指定应用，优先不抢占用户真实鼠标、不切换前台、不抢键盘焦点，并且每次操作都读值验证。当用户要求「帮我操作另一个 Mac 应用」「在后台完成桌面任务」「不要影响我正在用的鼠标」「读一下另一个应用里的信息」「点一下那个按钮」「同时在两个应用里干活」「用虚拟鼠标操作某个窗口」，或需要在 Finder / 计算器 / 文本编辑 / Safari / Electron 应用里做自动化时使用。
 agent_created: true
 ---
@@ -26,21 +27,40 @@ agent_created: true
 
 本技能是**第 3 档**，不是万能替代品。能在终端里干的事不要动 GUI。
 
-### 网页 vs 原生：先选对工具（v0.5.0）
+### 网页 vs 原生：先选对工具（v0.5.1 修正）
 
-| 目标 | 用什么 | 说明 |
+| 目标 | 用什么 | 调用方式 |
 |---|---|---|
-| 网页内容读取 / 搜索 | `WebFetch` / `WebSearch` | 只读抓取，不碰用户浏览器 |
-| 页面展示给用户 | `present_files`（内置右侧面板） | 用户自己的 WorkBuddy 窗口，不影响目标应用 |
-| 网页内点击 / 输入 / 滚动 | **本构建没有该接口** | 不要用坐标点击冒充浏览器自动化，见下 |
-| macOS 原生应用 | 本技能（`wbcu`） | 本技能的强项 |
-| 混合任务 | 各自做自己那段 | WorkBuddy 负责串，两边互不代理 |
+| 网页内点击 / 输入 / 滚动 / DOM 读取 / 截图 | **`agent-browser`** | `agent-browser open <url>` → `snapshot` / `click` / `fill` / `scroll` / `screenshot` |
+| 网页内容只读抓取（不需要执行 JS） | `WebFetch` / `WebSearch` | 直接调用，最省 |
+| 页面展示给用户看 | `present_files`（内置右侧面板） | 渲染 HTML/URL |
+| macOS 原生应用 | 本技能（`wbcu`） | 后台、不抢前台 |
+| 混合任务 | 各自做自己那段 | WorkBuddy 负责串 |
 
-**红线：不要用 `wbcu` 的坐标点击去点网页元素。**
-坐标点击落在「屏幕上那个位置」，页面一滚动/改布局就点错，而且读不到页面状态来验证结果。
-需要网页交互但没有接口时，**如实说能力缺失**，不要假装成功。
+**`agent-browser` 是 WorkBuddy 自带的 Browser Use 通道**（Vercel agent-browser CLI + 官方插件），
+已装在本机：`~/.workbuddy/binaries/node/versions/22.22.2-6/bin/agent-browser`（0.27.0）。
 
-完整调查见 `docs/browser-use.md`。
+```bash
+export PATH="/Users/lang/.workbuddy/binaries/node/versions/22.22.2-6/bin:$PATH"
+agent-browser open https://example.com     # 起 daemon（同一任务内复用）
+agent-browser snapshot                     # 读 DOM / 可点元素
+agent-browser click "@e3"                  # 或 CSS selector
+agent-browser fill "#q" "关键词"
+agent-browser get text "#result"           # 读结果验证
+agent-browser scroll down 600
+agent-browser screenshot /tmp/x.png
+agent-browser close                        # 任务结束必须关，避免残留 Chromium
+```
+
+实测（2026-11-16）：填表 → 点击 → 读回 JS 计算结果 → 滚动 400px → 截图，全通过；
+**打开/点击/关闭全程没有抢前台**（前台仍是用户的应用）。
+
+**红线不变：不要用 `wbcu` 的坐标点击去点网页元素。**
+网页有 DOM 就用 DOM（agent-browser），没有 DOM 才谈视觉；坐标点击落在「屏幕上那个位置」，
+页面一滚动就点错，而且读不到页面状态来验证。
+
+另有一条产品级能力（「浏览器操控」`workbuddy-browser-use`）需要在
+**设置 → 智能体 → 浏览器操控** 手动开启并装扩展，本机当前未开启；上面用的是已就绪的 CLI 通道。
 
 ---
 
@@ -171,6 +191,8 @@ wbcu displays                                   # 显示器几何与缩放
 wbcu compat                                     # 未文档化字段的版本闸门与逐应用退让
 wbcu focus --window <id>                        # keyWindow / 第一响应者
 wbcu trace start / report / stop                # 被动记录前台切换并做责任归因
+wbcu doctor                                     # 引擎/技能版本、命令引用、安装路径、会话堆积
+wbcu session prune                              # 清理失效会话文件
 wbcu launch --app <bundleId>                    # 后台启动，不抢前台
 ```
 

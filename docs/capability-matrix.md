@@ -9,7 +9,7 @@
 | 机器 | MacBook（Apple Silicon, arm64） |
 | macOS | 26.6 (Build 25G72) |
 | 工具链 | CommandLineTools，Swift 6.3.3，编译用 `MacOSX26.5.sdk` |
-| 引擎版本 | 0.5.0 |
+| 引擎版本 | 0.5.1 |
 | 判据 | 目标 UI **实际变化**（读 AX 值），不是命令返回码 |
 | 零干扰判据 | 真实鼠标零位移 + 前台应用不变 + `targetActive == false` + `idle` 探针确认期间无用户输入 |
 
@@ -286,3 +286,32 @@ fixture 见 `tests/integration/Fixture.swift`：同一窗口里放 NSButton / NS
 - 外部浏览器（Chrome / Edge）自动化：本构建无接口
 - 网页内交互：无接口，未测
 - 多显示器真机：本机只有一块屏
+
+---
+
+## 十一、v0.5.1：Browser Use 真实能力（更正 v0.5.0）
+
+| 通道 | 本机状态 | 能做什么 | 不能做什么 |
+|---|---|---|---|
+| `agent-browser` CLI 0.27.0 + 官方插件 1.3.0 | ✅ 已装可用 | open / snapshot / click / fill / type / scroll / screenshot / get text / eval / close | 不带用户登录态（独立 Chromium） |
+| 产品「浏览器操控」`workbuddy-browser-use` | ⚠️ 未启用 | 你的 Chrome/Edge/QQ，带登录态 | 需 UI 开启 + 装扩展 |
+| `WebFetch` / `WebSearch` | ✅ | 只读抓取、搜索 | 无交互 |
+| `present_files` | ✅ | 右侧面板渲染 | 只渲染 |
+
+实测（2026-11-16）：填表 → 点击 → 读回 JS 结果 → 滚动 400px → 截图，全过；**0 次前台切换**。
+
+混合任务（并行）：`agent-browser` 读写网页 + `wbcu` 后台算 7×6=42 → 两者都成功，前台 0 次变化。
+
+### 11.1 引擎 / 技能一致性（`wbcu doctor`）
+
+| 检查 | 判定 |
+|---|---|
+| engine_version | 0.5.1 |
+| version_match | engine == skill 版本 |
+| skill_commands | 技能引用的 `wbcu <cmd>` 全部存在（白名单 42 条，与 main.swift 由 lint 保证一致） |
+| installed_binary / overlay | 路径可执行 |
+| smoke | version / trace / session / doctor |
+| git | 仓库内才校验；已安装副本跳过 |
+| session_gc | 会话文件 > 10 报警，`wbcu session prune` 清理 |
+
+产物不一致时退出码 1；`warn` 级只提示不阻断；`install.sh` 装完自动跑。

@@ -170,6 +170,30 @@ func ghostOverlayBundleExecutable() -> String? {
 ///
 /// `waitForReady: false` 用于「现在不需要画，但想提前预热」的场景（例如会话建立）：
 /// 拉起进程后立刻返回，不阻塞调用方。真正要画的时候（goto）会再等就绪。
+/// 找 ghost daemon 的 pid。
+/// 优先读 pid 文件（daemon 自己写的）；没有就按命令行特征扫一遍做兜底，
+/// 因为历史版本启动的 daemon 不会写 pid 文件。
+func ghostDaemonPid() -> pid_t? {
+    if let s = try? String(contentsOfFile: ghostPidPath(), encoding: .utf8),
+       let p = pid_t(s.trimmingCharacters(in: .whitespacesAndNewlines)), kill(p, 0) == 0 {
+        return p
+    }
+    let ps = Process()
+    ps.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    ps.arguments = ["-f", "ThirdHandOverlay.app/Contents/MacOS/wbcu ghost daemon"]
+    let pipe = Pipe()
+    ps.standardOutput = pipe
+    ps.standardError = FileHandle.nullDevice
+    try? ps.run()
+    let d = pipe.fileHandleForReading.readDataToEndOfFile()
+    ps.waitUntilExit()
+    let out = String(data: d, encoding: .utf8) ?? ""
+    for line in out.split(separator: "\n") {
+        if let p = pid_t(line.trimmingCharacters(in: .whitespaces)) { return p }
+    }
+    return nil
+}
+
 func ensureGhostDaemon(waitForReady: Bool = true) {
     if ghostDaemonAlive(), ghostCall(["op": "ping"], timeoutMs: 300) != nil { return }
     // 记下用户当前的前台 App，通过环境变量交给 daemon：
@@ -748,10 +772,43 @@ func cmdGhost(_ args: Args) {
         if gJSONMode { emit(["ok": true]) } else { emitText("✅ cursor hidden") }
         exit(0)
     case "stop":
+        // 停止必须是「可验证的停止」。
+        // 旧实现发完 quit 就删 socket 并打印「已停止」—— 实测进程还活着（比如卡在启动中），
+        // 于是测试报「残留」、而命令说成功。这就是典型的假装成功。
+        let pidBefore = ghostDaemonPid()
         _ = ghostCall(["op": "quit"], timeoutMs: 500)
         try? FileManager.default.removeItem(atPath: GHOST_SOCK_PATH)
-        emitText("✅ Agent Cursor daemon 已停止")
-        exit(0)
+
+        // 最多等 1.5s 让它自己退
+        var alive = pidBefore.map { kill($0, 0) == 0 } ?? false
+        var waited = 0.0
+        while alive && waited < 1.5 {
+            usleep(100_000); waited += 0.1
+            if let p = pidBefore { alive = kill(p, 0) == 0 } else { alive = false }
+        }
+        // 还不退就 TERM，再不行 KILL
+        var escalated = ""
+        if alive, let p = pidBefore {
+            kill(p, SIGTERM); escalated = "SIGTERM"
+            waited = 0
+            while kill(p, 0) == 0 && waited < 1.5 { usleep(100_000); waited += 0.1 }
+        }
+        if let p = pidBefore, kill(p, 0) == 0 {
+            kill(p, SIGKILL); escalated = "SIGKILL"
+            usleep(300_000)
+        }
+        let stillAlive = pidBefore.map { kill($0, 0) == 0 } ?? false
+        try? FileManager.default.removeItem(atPath: ghostPidPath())
+
+        if gJSONMode {
+            emit(["ok": !stillAlive, "pid": Int(pidBefore ?? 0), "stopped": !stillAlive,
+                  "escalated": escalated, "socketRemoved": !FileManager.default.fileExists(atPath: GHOST_SOCK_PATH)])
+        } else if stillAlive {
+            emitText("❌ daemon 未退出（pid \(pidBefore ?? 0)），已尝试 \(escalated.isEmpty ? "quit" : escalated)")
+        } else {
+            emitText("✅ Agent Cursor daemon 已停止" + (escalated.isEmpty ? "" : "（\(escalated)）"))
+        }
+        exit(stillAlive ? 1 : 0)
     default:
         let st = ghostCall(["op": "state"], timeoutMs: 400)
         if gJSONMode { emit(st ?? ["ok": true, "alive": ghostDaemonAlive()]) }

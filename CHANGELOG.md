@@ -5,6 +5,85 @@
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-11-16
+
+对 v0.5.0 的一处**事实性纠错**加两项工程补强。不改底层引擎、不新增任何阻塞。
+
+### 一、更正：Browser Use 其实可用（v0.5.0 的结论是错的）
+
+v0.5.0 我写「本构建没有浏览器交互接口」，依据是 `app.asar` 里搜不到 `browser_*`。
+**那个判断错了**，因为我只查了主 bundle 字符串，没查插件缓存、CLI 和技能注册表。
+
+事实（WorkBuddy 5.11.3，本机实测）：
+
+| 通道 | 状态 | 说明 |
+|---|---|---|
+| `agent-browser` CLI（Vercel agent-browser 0.27.0 + 官方插件 1.3.0） | ✅ **已装、已跑通** | `~/.workbuddy/binaries/node/versions/22.22.2-6/bin/agent-browser` |
+| 产品「浏览器操控」`workbuddy-browser-use` | ⚠️ 产品支持，本机**未启用** | 设置 → 智能体 → 浏览器操控 → 安装扩展 |
+
+实测链路：`open` → `fill` → `click` → **`get text` 读回 JS 计算结果** → `scroll`（scrollY=400）
+→ `screenshot`（6.7K PNG）→ `close`，全部通过；**全过程零次前台切换**。
+
+完整证据与调用方式见 [`docs/browser-use.md`](docs/browser-use.md)（该文件已重写并标注自我推翻）。
+
+### 二、`wbcu doctor`：引擎/技能版本一致性自检
+
+起因是 v0.5.0 的真实事故：`install.sh` 默认只装二进制，技能要显式 `--skill`，
+结果二进制 0.5.0、SKILL.md 还是 0.4.2（177 行），技能里教着不存在的 `wbcu launch`。
+
+`wbcu doctor` 现在一次列出 10 项：
+
+```
+engine_version / skill_file / version_match / skill_commands / skill_stale_claims /
+installed_binary / overlay / smoke / git / skill_lines / session_gc
+```
+
+- 技能新增 `version:` 字段，与二进制版本严格比对
+- 扫描技能正文里所有 `wbcu <cmd>`，和编译期命令白名单交叉核对（白名单与 `main.swift` 的
+  switch 由单元测试保证一致，42 条）
+- 已安装副本不在 git 仓库内时**跳过** git 锚点检查，不误报
+- 有 `fail` 项退出码 1，`warn` 项只提示不阻断
+
+### 三、`install.sh` 默认装技能 + 装完自检
+
+- 默认 `--skill`（新增 `--no-skill` 才跳过）—— 从根上消掉「二进制新、技能旧」
+- 安装结束自动跑 `wbcu doctor`；不一致只打提示，**不阻断安装**
+
+### 四、修掉一个「假装成功」：`ghost stop` 并没有真的停掉进程
+
+回归时发现：`ghost stop` 打印「✅ 已停止」，但 `pgrep` 还能看到 daemon 在跑
+（实测 pid 52987，SIGTERM 都没被处理）。原因：旧实现发完 `quit` 就删 socket，
+**无条件**报成功，从不确认进程是否退出。
+
+现在改成可验证的停止：
+
+1. daemon 启动时写 `~/.wbcu/ghost.pid`，并注册 SIGTERM 处理器
+2. `stop` 先 quit → 等 1.5s → 仍活着就 SIGTERM → 再不行 SIGKILL
+3. 最后用 `kill(pid, 0)` 复核，退出码如实反映结果（失败 exit 1）
+
+实测：历史遗留 daemon（无 pid 文件，靠 `pgrep` 兜底找到）→ `SIGTERM` 后退出；
+新 daemon → 干净 quit，无升级。
+
+### 五、会话垃圾清理
+
+实测一周堆了 15 个会话文件（全指向已关闭的窗口）。新增：
+
+- `wbcu session prune [--max-age 秒] [--dry-run]`：目标是死的或超过 24h 就删
+- `session start` 时若会话文件 > 20 个，顺手清一次（只读目录计数，不扫内容）
+
+### 六、Skill 修正
+
+- 浏览器章节从「本构建没有该接口」改为「`agent-browser` 可用 + 调用示例 + 实测数据」
+- 加一条硬规则：**网页有 DOM 就用 DOM，不要用 wbcu 坐标点击去点网页**
+- 保留原红线与所有 v0.5.0 性能能力（launch / 会话复用 / identifier / 快速验证 / trace）
+
+### 七、测试
+
+- 新增 `tests/regression/version-consistency.sh`：7 项断言，含**人为制造版本漂移**验证 doctor 能抓到
+- `tests/unit/run.sh` 新增：doctor 命令白名单与 `main.swift` switch 必须完全一致
+- 7 套 GUI 回归 + `selftest 53/53` 保持通过
+
+
 ## [0.5.0] — 2026-11-12
 
 能力打磨阶段。不新增任何阻塞、审批或门禁；只做四件事：**少抢前台、少重复初始化、点得更准、把证据留下来**。
@@ -66,7 +145,7 @@ ghost daemon 拉起改为非阻塞预热（`waitForReady: false`），会话建�
 Skill 里写死了路由：网页读取 → `WebFetch`；展示 → `present_files`；原生应用 → Third Hand；
 混合任务各自做自己那段，互不代理。
 
-### 六、测试
+### 七、测试
 
 新增 `tests/regression/no-reactivation.sh`（13 项断言，全部实跑）：
 

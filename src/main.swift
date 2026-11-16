@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-let VERSION = "0.5.0"
+let VERSION = "0.5.1"
 
 func usage() {
     print("""
@@ -102,6 +102,7 @@ case "experience": cmdExperience(args)
 case "bench": cmdBench(args)
 case "perf": cmdPerf(args)
 case "trace": cmdTrace(args)
+case "doctor": cmdDoctor(args)
 case "selftest": cmdSelfTest(args)
 case "session": cmdSession(args)
 case "guard": cmdGuard(args)

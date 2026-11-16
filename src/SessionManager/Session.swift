@@ -112,6 +112,29 @@ func allSessions() -> [SessionState] {
     }.sorted { $0.createdAt < $1.createdAt }
 }
 
+/// 清理失效会话文件。
+///
+/// 为什么需要：`session end` 只在正常收尾时调用；测试中断、进程被杀、任务半途放弃
+/// 都会留下状态文件。实测一周下来堆了 15 个，全指向已经关掉的计算器窗口。
+/// 它们不影响功能（`--app` 寻址只看存活会话），但会让 `session list` 变脏，
+/// 也会让「复用」逻辑每次多读几份 JSON。
+///
+/// 规则：目标进程/窗口已消失 → 删；或者年龄超过 24h → 删（哪怕还活着，也早就不该复用了）。
+func pruneSessions(maxAgeSeconds: Int = 24 * 3600, dryRun: Bool = false) -> (removed: Int, kept: Int) {
+    var removed = 0, kept = 0
+    for s in allSessions() {
+        let age = Int(Date().timeIntervalSince1970 - s.createdAt)
+        let deadTarget = !sessionTargetAlive(s)
+        if deadTarget || age > maxAgeSeconds {
+            if !dryRun { try? FileManager.default.removeItem(at: sessionPath(s.id)) }
+            removed += 1
+        } else {
+            kept += 1
+        }
+    }
+    return (removed, kept)
+}
+
 /// 找出「同一个 App 还活着的会话」，新的优先。
 ///
 /// 为什么需要它：Agent 每做一步就可能重新 `session start` 一次。以前每次都新建 id、
@@ -186,9 +209,10 @@ func cmdSession(_ args: Args) {
     case "cursor": sessionCursor(args)
     case "verify": sessionVerify(args)
     case "end":   sessionEnd(args)
+    case "prune": sessionPrune(args)
     default:
         emitText("""
-        wbcu session <start|list|state|capture|inspect|click|type|key|cursor|verify|end>
+        wbcu session <start|list|state|capture|inspect|click|type|key|cursor|verify|end|prune>
 
         示例：
           wbcu session start --app com.apple.calculator
@@ -232,6 +256,18 @@ private func needSession(_ args: Args) -> SessionState {
     return s
 }
 
+private func sessionPrune(_ args: Args) {
+    let maxAge = args.int("max-age") ?? (24 * 3600)
+    let dry = args.flag("dry-run")
+    let r = pruneSessions(maxAgeSeconds: maxAge, dryRun: dry)
+    if gJSONMode {
+        emit(["ok": true, "removed": r.removed, "kept": r.kept, "dryRun": dry])
+    } else {
+        emitText("\(dry ? "试运行：" : "")清理了 \(r.removed) 个失效会话，保留 \(r.kept) 个")
+    }
+    exit(0)
+}
+
 func emitError(_ code: String, _ msg: String, extra: [String: Any] = [:]) -> Never {
     var out: [String: Any] = ["ok": false, "error": code, "message": msg]
     for (k, v) in extra { out[k] = v }
@@ -255,6 +291,14 @@ private func sessionStart(_ args: Args) {
         emitError(CUError.windowNotFound, "应用未运行: \(token)")
     }
     let bid = app.bundleIdentifier ?? token
+
+    // 顺手清理：只在文件明显偏多时才扫，避免每次 start 都读一堆 JSON
+    let sessDirPath = sessionsDir().path
+    let fileCount = ((try? FileManager.default.contentsOfDirectory(atPath: sessDirPath)) ?? []).count
+    if fileCount > 20 {
+        let r = pruneSessions()
+        if !gJSONMode, r.removed > 0 { emitText("· 已清理 \(r.removed) 个失效会话文件") }
+    }
 
     // 复用优先：同一个 App 已有活着的会话就直接还它。
     // 这一步省掉的是重复的窗口发现 + 整树指纹（60~90ms）+ ghost daemon 拉起，

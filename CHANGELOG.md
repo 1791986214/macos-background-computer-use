@@ -5,6 +5,37 @@
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-11-16
+
+只有一件事：**把「Windows 能不能用」这个问题回答清楚，并写进技能里**。
+代码逻辑零改动，版本号递增是为了让「引擎 == 技能」这条不变量继续成立。
+
+### 结论：Windows 不可用，且不是编译问题
+
+证据（`docs/windows-feasibility.md` 有完整表）：
+
+| 检查 | 结果 |
+|---|---|
+| 二进制格式 | `Mach-O 64-bit arm64`，Windows 只认 PE |
+| 框架依赖 | AppKit 20 文件 / CoreGraphics 15 / ApplicationServices 10 / ScreenCaptureKit 3，全是 macOS 独占 |
+| 工具链 | 本机只有 `MacOSX*.sdk`，无 Windows 目标 |
+| Windows 代码 | `user32` / `SendInput` / `UIAutomation` 命中 0 处；仓库无 `.exe`/`.dll` |
+
+移植量级：7777 行里，可复用的是「验证逻辑 + CLI 壳 + 测试方法」约 25–30%，
+其余 5000+ 行平台绑定要在 Windows 上重写 —— 那是独立引擎，不是补丁。
+
+### Windows 用户的正确路径
+
+1. WorkBuddy 产品自带 Computer Use（`requireFlags` 含 `macOrWindowsPlatform`，官方支持 Windows）
+2. 本地方案：PowerShell + UIAutomation / pywinauto / AutoHotkey
+3. 真要 Third Hand 的 Windows 版 → 按 `docs/windows-feasibility.md` 方案 C 重写，先做 UIA spike
+
+### 顺带
+
+- SKILL.md 顶部加平台声明（避免别人拿到包以为是跨平台的）
+- 分发包 README 同步说明（`dist-src/README.md`）
+
+
 ## [0.5.1] — 2026-11-16
 
 对 v0.5.0 的一处**事实性纠错**加两项工程补强。不改底层引擎、不新增任何阻塞。

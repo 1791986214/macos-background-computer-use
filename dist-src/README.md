@@ -14,6 +14,10 @@
 
 **要求**：macOS 14+，**Apple Silicon（arm64）**。Intel 机器这个二进制跑不了，需要自己编译。
 
+> ⚠️ **Windows 完全用不了**，而且不是「重新编译」能解决的：它依赖的 Accessibility /
+> ScreenCaptureKit / CGEvent 在 Windows 上不存在。Windows 请用 WorkBuddy 自带的
+> Computer Use，或 PowerShell+UIA / pywinauto。详见 `docs/windows-feasibility.md`。
+
 ---
 
 ## 二、安装（三步，1 分钟）

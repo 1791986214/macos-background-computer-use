@@ -72,6 +72,31 @@ agent-browser close                       # 任务结束必须关，防残留 Ch
 
 ---
 
+### 2.1 macOS 上为什么「设置 → 智能体」里找不到浏览器操控
+
+查了应用包（5.11.3）的实际注册逻辑，有两个原因，都不是「Mac 不支持」：
+
+```js
+// app.asar 里设置项的注册
+{ id:`extensions.browserExtension.${browser}`, tab:`extensions`,
+  requireFlags: browser === `qq-browser`
+    ? [`localEnvironment`, `macOrWindowsPlatform`, `browserUseEnabled`, `domesticProduct`]
+    : [`localEnvironment`, `macOrWindowsPlatform`, `browserUseEnabled`] }
+```
+
+1. **位置在「设置 → 扩展」，不在「智能体」。** `tab: extensions` 是硬编码的；
+   官方文章里的「设置 → 智能体 → 浏览器操控」与这个构建的实际注册不一致。
+2. **还要过一道服务端开关 `browserUseEnabled`**（来自远程配置 `browserUseFeatureEnabled`）。
+   `requireFlags` 是"全为真才渲染"的语义 —— 开关关着时，这一整组 UI 直接不存在，
+   连搜索也搜不到（搜索索引同样走 `matchesSearchFlags`）。
+
+`macOrWindowsPlatform` 说明 Mac 是**支持**的，所以缺这个选项 = 账号/企业策略侧的功能开关没开，
+不是平台阉割。本机实测：无 browser 技能、无扩展、`app-config.json` 无对应键 → 确实未开启。
+
+对照：真正驱动运行时的键是 `browserControlEnabled`（`getBrowserControlEnabledFromAppConfig`），
+它变化时会触发 `sessionManager.refreshMcpConfig()` —— 也就是说开启后浏览器能力是
+**以 MCP 形式**注进来的，这也是为什么"工具列表里看不到 browser 工具"。
+
 ## 三、两条通道的区别（别搞混）
 
 | | `agent-browser` CLI（本机已就绪） | 产品「浏览器操控」`workbuddy-browser-use` |

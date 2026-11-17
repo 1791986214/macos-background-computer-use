@@ -48,6 +48,7 @@ echo "== 附带技能与脚本 =="
 mkdir -p "$STAGE/skill"
 cp "$ROOT/skills/workbuddy-third-hand/SKILL.md" "$STAGE/skill/SKILL.md"
 cp "$ROOT/src-windows/install.ps1" "$ROOT/src-windows/uninstall.ps1" "$STAGE/"
+cp "$ROOT/src-windows/install-windows.ps1" "$STAGE/"
 
 echo "== 打包 =="
 ( cd "$STAGE" && zip -qr "$OUT" . )

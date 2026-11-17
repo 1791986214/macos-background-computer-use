@@ -1,0 +1,45 @@
+{
+  "name": "workbuddy-third-hand",
+  "version": "0.6.0",
+  "description": "WorkBuddy Third Hand — cross-platform background computer use (macOS + Windows). Installs the native engine and the WorkBuddy skill.",
+  "keywords": [
+    "workbuddy",
+    "computer-use",
+    "uiautomation",
+    "accessibility",
+    "automation",
+    "windows",
+    "macos"
+  ],
+  "license": "MIT",
+  "author": "WorkBuddy",
+  "homepage": "https://github.com/1791986214/macos-background-computer-use",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/1791986214/macos-background-computer-use.git"
+  },
+  "bin": {
+    "wbcu": "bin/wbcu.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "scripts/",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "wbcu": "node bin/wbcu.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32",
+    "darwin"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}

@@ -6,7 +6,15 @@
 
 WorkBuddy 的跨平台桌面操作技能与执行引擎——让 WorkBuddy 能够观察、理解并操作桌面应用，在尽可能不打断用户工作的情况下完成真实任务。
 
-> **Windows 快速开始**（PowerShell，普通用户即可）：
+> **快速开始**（两条路，任选其一）
+>
+> npm（已装 Node 18+，Windows / macOS 通用）：
+>
+> ```bash
+> npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.0-rc1/workbuddy-third-hand-0.6.0.tgz
+> ```
+>
+> PowerShell（没装 Node 时，Windows）：
 >
 > ```powershell
 > powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.0-rc1/install-windows.ps1 | iex"

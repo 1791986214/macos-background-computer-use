@@ -37,3 +37,8 @@ secrets*
 .vscode/
 *.xcodeproj/xcuserdata/
 dist/
+
+# npm 包产物（二进制由 postinstall 下载，不入库）
+npm/vendor/
+npm/*.tgz
+npm/node_modules/

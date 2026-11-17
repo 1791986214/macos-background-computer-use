@@ -1,7 +1,30 @@
 # Windows 安装与验证（v0.6.0）
 
 
-## 0. 最快路径：从发布页一条命令装好
+## 0. 最快路径
+
+### 0.1 npm（已装 Node 18+ 时最省事）
+
+```powershell
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.0-rc1/workbuddy-third-hand-0.6.0.tgz
+wbcu doctor
+```
+
+npm 包本身只有 7 KB：postinstall 会按当前平台下载对应的原生引擎（Windows 是 `wbcu.exe`），
+**校验 sha256 后**才解压，并顺手把 `SKILL.md` 装进 WorkBuddy 技能目录。
+失败时不会静默：会打印期望路径、平台与三种处理办法。
+
+离线/内网：
+
+```powershell
+$env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.0.zip"
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.0-rc1/workbuddy-third-hand-0.6.0.tgz
+```
+
+> 本包尚未发布到 npm registry（`npm i -g workbuddy-third-hand` 暂时不可用），
+> 目前走 GitHub Release 的 tarball URL；registry 发布只需把同一个 tgz 推上去，无需改代码。
+
+### 0.2 PowerShell 引导脚本（没装 Node 时用）
 
 在 Windows 上打开 **PowerShell**（普通用户即可，不需要管理员）：
 

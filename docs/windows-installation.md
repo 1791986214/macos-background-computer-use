@@ -1,5 +1,32 @@
 # Windows 安装与验证（v0.6.0）
 
+
+## 0. 最快路径：从发布页一条命令装好
+
+在 Windows 上打开 **PowerShell**（普通用户即可，不需要管理员）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.0-rc1/install-windows.ps1 | iex"
+```
+
+它会依次做：下载发布包 → 校验大小并打印 SHA256 → 解压到 `%TEMP%\wbcu-setup`
+→ 调用 `install.ps1`（装引擎 + 装技能 + 冒烟测试）→ 打印下一步命令。
+
+不想执行远程脚本时，手动两步等价：
+
+```powershell
+$u = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.0-rc1/wbcu-windows-win-x64-0.6.0.zip"
+Invoke-WebRequest $u -OutFile wbcu.zip -UseBasicParsing
+Expand-Archive wbcu.zip -DestinationPath wbcu -Force
+powershell -ExecutionPolicy Bypass -File wbcu\install.ps1 -Source wbcu
+```
+
+当前包 SHA256：`3746e12fe68b5985a263ca7462847fd229fc5d01a04b948c7409bb98d6c37e1e`
+（`Get-FileHash wbcu.zip -Algorithm SHA256` 自行核对）。
+
+> ⚠️ `v0.6.0-rc1` 是**预发布**：编译、单测、契约一致性已验证，**真机 GUI 验收未做**。
+> 装完先跑第 4 节自检；要宣称「能用」必须跑第 5 节。
+
 ## 1. 环境要求
 
 | 项 | 要求 | 说明 |

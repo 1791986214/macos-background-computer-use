@@ -6,6 +6,15 @@
 
 WorkBuddy 的跨平台桌面操作技能与执行引擎——让 WorkBuddy 能够观察、理解并操作桌面应用，在尽可能不打断用户工作的情况下完成真实任务。
 
+> **Windows 快速开始**（PowerShell，普通用户即可）：
+>
+> ```powershell
+> powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.0-rc1/install-windows.ps1 | iex"
+> ```
+>
+> 预发布包 `v0.6.0-rc1`：编译 / 单测 / 契约已验证，**真机 GUI 验收未做**。
+> 详见 [`docs/windows-installation.md`](docs/windows-installation.md)。
+
 **macOS 与 Windows 双平台，一个技能，两个原生引擎**（共享同一份跨平台契约）：
 
 | 平台 | 引擎 | 二进制 | 底层技术 | 状态 |

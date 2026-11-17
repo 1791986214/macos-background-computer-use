@@ -26,7 +26,8 @@ public sealed class GhostDaemon
     private const uint WM_APP_OP = 0x8001;
     private const uint WM_APP_QUIT = 0x8002;
     private const uint TimerId = 1;
-    private const int TickMs = 33;
+    /// <summary>帧间隔由 GhostTokens.TargetFps（60）推导，不再写死 33ms（30fps）。</summary>
+    private static readonly int TickMs = GhostTokens.TickMs;
 
     private readonly string _pipeName;
     private readonly string _sessionId;
@@ -71,7 +72,7 @@ public sealed class GhostDaemon
         var pipeThread = new Thread(PipeLoop) { IsBackground = true, Name = "wbcu-ghost-pipe" };
         pipeThread.Start();
 
-        Native.SetTimer(_overlay.Hwnd, (UIntPtr)TimerId, TickMs, IntPtr.Zero);
+        Native.SetTimer(_overlay.Hwnd, (UIntPtr)TimerId, (uint)TickMs, IntPtr.Zero);
         Render(); // 先把光标画出来（默认在窗口左上角附近）
 
         while (Native.GetMessageW(out var msg, IntPtr.Zero, 0, 0) > 0)
@@ -204,13 +205,32 @@ public sealed class GhostDaemon
 
     private void OnTick()
     {
+        SyncDpi();
         DrainOps();
 
         if (!_state.Visible) return;
 
-        // 点击动画：260ms 内显示扩散环
-        var clicking = _state.ClickStart > 0 && Environment.TickCount64 - _state.ClickStart < 260;
+        // 点击动画：GhostTokens.ClickAnimationMs（120ms）内显示扩散环
+        var clicking = _state.ClickStart > 0
+                       && Environment.TickCount64 - _state.ClickStart < GhostTokens.ClickAnimationMs;
         Render(clicking ? (_state.ClickStart) : 0);
+    }
+
+    /// <summary>
+    /// 跟随目标窗口的 DPI 变化（用户把窗口拖到另一块不同缩放率的显示器上，
+    /// 或者中途改了系统缩放）。以前只在启动时算一次 Scale，跨屏后光标就会
+    /// 因为 DPI 二次变化而尺寸失真——这里每帧做一次极轻量的比对，变了才重建位图。
+    /// </summary>
+    private void SyncDpi()
+    {
+        if (_targetHwnd == IntPtr.Zero || !Native.IsWindow(_targetHwnd)) return;
+
+        var s = ScaleOf(_targetHwnd);
+        if (Math.Abs(s - _state.Scale) < 0.001) return;
+
+        _state.Scale = s;
+        // 位图与窗口尺寸都由 SizePx 推导；下一帧 SetPixels/Present 会自动按新尺寸重建。
+        Render();
     }
 
     private void Render(long clickStart = 0)
@@ -235,13 +255,19 @@ public sealed class GhostDaemon
         var cursor = CursorRaster.RenderCursor(size);
         if (clickStart > 0)
         {
-            var progress = Math.Clamp((Environment.TickCount64 - clickStart) / 260.0, 0, 1);
+            var progress = Math.Clamp(
+                (Environment.TickCount64 - clickStart) / (double)GhostTokens.ClickAnimationMs, 0, 1);
             var ring = CursorRaster.RenderClickRing(size, progress);
             cursor = Composite(cursor, ring, size);
         }
 
+        // 热点对齐：箭头尖端在覆盖层内偏移 (TipX, TipY)，所以窗口原点要往左上退这么多，
+        // 才能让尖端正好落在 (sx, sy)——也就是真实点击坐标上。
+        var hotX = (int)Math.Round(GhostTokens.TipXDip * _state.Scale);
+        var hotY = (int)Math.Round(GhostTokens.TipYDip * _state.Scale);
+
         _overlay.SetPixels(cursor, size, size);
-        _overlay.Present(sx, sy, size, size, (byte)Math.Clamp(_state.Alpha, 0, 255));
+        _overlay.Present(sx - hotX, sy - hotY, size, size, (byte)Math.Clamp(_state.Alpha, 0, 255));
     }
 
     private static byte[] Composite(byte[] bottom, byte[] top, int size)
@@ -273,8 +299,13 @@ public sealed class GhostDaemon
         public int Alpha { get; set; } = 235;
         /// <summary>DPI 缩放系数（96 DPI = 1.0）。</summary>
         public double Scale { get; set; } = 1.0;
-        /// <summary>126 pt × 缩放；高 DPI 下自动放大，保持视觉尺寸一致。</summary>
-        public int SizePx => Math.Clamp((int)Math.Round(126 * Scale), 64, 512);
+        /// <summary>
+        /// 承载窗口边长（物理像素）= OverlayWidthDip × DPI 缩放。
+        /// 注意：这只是**窗口**大小，箭头和光晕各自按 GhostTokens 的 DIP 值独立绘制，
+        /// 不再跟着窗口一起放大。
+        /// </summary>
+        public int SizePx => Math.Clamp(
+            (int)Math.Round(GhostTokens.OverlayWidthDip * Scale), 64, 512);
     }
 }
 
@@ -416,7 +447,7 @@ public sealed class LayeredOverlay : IDisposable
         return Native.DefWindowProcW(hWnd, msg, wParam, lParam);
     }
 
-    /// <summary>由 GhostDaemon 挂上的每帧回调（33ms）。</summary>
+    /// <summary>由 GhostDaemon 挂上的每帧回调（GhostTokens.TickMs，60fps 下约 16ms）。</summary>
     public Action? GhostTick { get; set; }
 
     public void Dispose()

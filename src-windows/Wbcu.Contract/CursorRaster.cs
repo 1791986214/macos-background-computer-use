@@ -3,10 +3,16 @@ namespace Wbcu.Contract;
 /// <summary>
 /// Ghost Cursor 的**纯像素渲染**。不碰任何窗口 API，因此可以在 macOS / CI 上直接单测。
 ///
-/// 视觉口径与 macOS v0.5.0 保持一致：
-///   - 浅色箭头（近白，略带冷调）
-///   - 深色细描边（保证在浅色背景上也看得见）
-///   - 多层柔和圆形光晕（不是硬边圆）
+/// 视觉口径（Codex Computer Use 风格）：
+///   - 承载位图 126 DIP，但**箭头只占 20×24 DIP**，光晕直径 56 DIP。
+///     三者分别受 GhostTokens 控制，绝不共用同一个尺寸。
+///   - 浅色半透明填充 + 极细描边（1.5 DIP），无黑色投影。
+///   - 低不透明度柔和光晕（0.22），边缘自然衰减到 0。
+///
+/// 历史坑（v0.6.1 及以前）：箭头多边形用 0..1 归一化坐标，直接乘位图边长，
+/// 于是 126px 的位图里箭头被画成 55×78px；描边按 1.4% 位图宽算，也跟着变粗；
+/// 还叠了一层向右下偏移的深色投影，观感就是"巨大 + 黑边 + 重影 + 遮挡内容"。
+/// 现在几何按 DIP 独立计算，与位图边长无关。
 ///
 /// 输出格式：32bpp BGRA，**已预乘 alpha**（UpdateLayeredWindow + AC_SRC_ALPHA 要求预乘）。
 ///
@@ -15,80 +21,94 @@ namespace Wbcu.Contract;
 /// </summary>
 public static class CursorRaster
 {
-    // 箭头多边形（单位方形内，指向左上）
+    /// <summary>
+    /// 箭头多边形，坐标单位是**箭头自身的 glyph box**（归一化到
+    /// CursorGlyphWidthDip × CursorGlyphHeightDip），尖端在 (0,0)，向右下展开。
+    /// 不再是 0..1 的整窗口坐标——这是本次修形的关键。
+    /// </summary>
     private static readonly (double X, double Y)[] Arrow =
     {
-        (0.22, 0.12),
-        (0.22, 0.74),
-        (0.36, 0.60),
-        (0.45, 0.82),
-        (0.55, 0.78),
-        (0.46, 0.56),
-        (0.66, 0.56),
+        (0.00, 0.00),   // 尖端（热点）
+        (0.00, 0.89),   // 左边落底
+        (0.32, 0.69),   // 左下内收
+        (0.52, 1.00),   // 尾钩最下
+        (0.75, 0.94),   // 尾钩外侧
+        (0.54, 0.63),   // 尾钩内收
+        (1.00, 0.63),   // 右肩
     };
-
-    // 光晕中心：取箭头近似重心，保证四个角一定落在光晕之外（否则窗口边缘会出现方形硬切）
-    private const double HaloCx = 0.38;
-    private const double HaloCy = 0.45;
-    private const double HaloRadiusRatio = 0.42;
-    private const double ShadowRadiusRatio = 0.055;
 
     /// <summary>
     /// 渲染一枚光标。sizePx 为输出位图边长（正方形，物理像素）。
-    /// 返回长度为 sizePx*sizePx*4 的 BGRA 预乘缓冲。
+    /// 缩放系数由 sizePx / OverlayWidthDip 反推，因此 126→100%、252→200%。
     /// </summary>
     public static byte[] RenderCursor(int sizePx)
     {
         if (sizePx < 8) sizePx = 8;
         var buf = new byte[sizePx * sizePx * 4];
-        var haloRadius = sizePx * HaloRadiusRatio;
-        var outlineHalf = Math.Max(1.0, sizePx * 0.014);
+
+        var scale = sizePx / GhostTokens.OverlayWidthDip;
+        var glyphW = GhostTokens.CursorGlyphWidthDip * scale;
+        var glyphH = GhostTokens.CursorGlyphHeightDip * scale;
+        var tipX = GhostTokens.TipXDip * scale;
+        var tipY = GhostTokens.TipYDip * scale;
+
+        var glowR = GhostTokens.GlowDiameterDip * scale / 2.0;
+        var glowCx = tipX + glyphW * GhostTokens.GlowCenterX;
+        var glowCy = tipY + glyphH * GhostTokens.GlowCenterY;
+
+        // 描边半宽（物理像素）。1.5 DIP 的线，两侧各 0.75 DIP。
+        var strokeHalf = Math.Max(0.75, GhostTokens.StrokeWidthDip * scale / 2.0);
+
+        // 只扫「箭头 bbox ∪ 光晕圆」的包围盒，其余留全透明。
+        // 既保证角落干净，也让高 DPI（252px 位图）下的每帧开销可控。
+        var minX = (int)Math.Floor(Math.Min(tipX, glowCx - glowR)) - 2;
+        var maxX = (int)Math.Ceiling(Math.Max(tipX + glyphW, glowCx + glowR)) + 2;
+        var minY = (int)Math.Floor(Math.Min(tipY, glowCy - glowR)) - 2;
+        var maxY = (int)Math.Ceiling(Math.Max(tipY + glyphH, glowCy + glowR)) + 2;
+        minX = Math.Max(0, minX); minY = Math.Max(0, minY);
+        maxX = Math.Min(sizePx - 1, maxX); maxY = Math.Min(sizePx - 1, maxY);
 
         const int Sub = 4; // 每像素 4x4 超采样，用于抗锯齿
-        var inv = 1.0 / sizePx;
 
-        for (var py = 0; py < sizePx; py++)
+        for (var py = minY; py <= maxY; py++)
         {
-            for (var px = 0; px < sizePx; px++)
+            for (var px = minX; px <= maxX; px++)
             {
                 var coverFill = 0.0;
                 var coverEdge = 0.0;
                 var haloSum = 0.0;
-                var shadowSum = 0.0;
 
                 for (var sy = 0; sy < Sub; sy++)
                 {
                     for (var sx = 0; sx < Sub; sx++)
                     {
-                        var u = (px + (sx + 0.5) / Sub) * inv;
-                        var v = (py + (sy + 0.5) / Sub) * inv;
+                        // 采样点落在物理像素坐标系
+                        var fx = px + (sx + 0.5) / Sub;
+                        var fy = py + (sy + 0.5) / Sub;
 
-                        var inside = PointInPolygon(u, v);
-                        var dist = DistanceToPolygon(u, v);
-
-                        if (inside) coverFill += 1;
-                        // 描边：边界两侧各半个线宽（内部内侧更明显）
-                        if (dist <= outlineHalf * inv) coverEdge += 1;
-
-                        var hx = (u - HaloCx) * sizePx;
-                        var hy = (v - HaloCy) * sizePx;
-                        var t = Math.Sqrt(hx * hx + hy * hy) / haloRadius;
+                        // 光晕：按物理距离衰减，与箭头尺寸无关
+                        var hx = fx - glowCx;
+                        var hy = fy - glowCy;
+                        var t = Math.Sqrt(hx * hx + hy * hy) / glowR;
                         if (t < 1)
                         {
-                            // 平滑衰减：中段更饱满，边缘更柔（近似 macOS 的多层光晕）
+                            // (1-t)^2：中心饱满、边缘完全收敛，不留硬边
                             var k = 1 - t;
-                            haloSum += k * k * 0.46;
+                            haloSum += k * k * GhostTokens.GlowOpacity;
                         }
 
-                        // 柔和投影：向右下偏移一点点的模糊轮廓，保证浅色背景上也看得见
-                        var sxu = u - 0.020;
-                        var syv = v - 0.055;
-                        var sdist = DistanceToPolygon(sxu, syv);
-                        var sNorm = sdist / ShadowRadiusRatio;
-                        if (sNorm < 1)
+                        // 箭头本体：转到 glyph 归一化坐标（0..1），与位图尺寸彻底解耦
+                        var u = (fx - tipX) / glyphW;
+                        var v = (fy - tipY) / glyphH;
+
+                        if (u >= -0.1 && u <= 1.1 && v >= -0.1 && v <= 1.1)
                         {
-                            var k = 1 - sNorm;
-                            shadowSum += k * k * 0.34;
+                            if (PointInPolygon(u, v)) coverFill += 1;
+                            // 描边判定：把物理线宽换算回 glyph 归一化单位
+                            var distNorm = DistanceToPolygon(u, v);
+                            var halfU = strokeHalf / glyphW;
+                            var halfV = strokeHalf / glyphH;
+                            if (distNorm <= Math.Max(halfU, halfV)) coverEdge += 1;
                         }
                     }
                 }
@@ -97,30 +117,26 @@ public static class CursorRaster
                 var fill = coverFill / n;
                 var edge = Math.Min(1.0, coverEdge / n);
                 var halo = haloSum / n;
-                var shadow = shadowSum / n;
 
-                // 合成顺序：投影 → 光晕 → 箭头填充 → 描边
+                // 合成顺序：光晕 → 填充 → 描边（无投影，避免"重影"）
                 double r = 0, g = 0, b = 0;
                 var a = 0.0;
 
-                if (shadow > 0) Blend(ref r, ref g, ref b, ref a, 22, 26, 34, shadow);
-                if (halo > 0) Blend(ref r, ref g, ref b, ref a, 130, 170, 250, halo);
+                if (halo > 0)
+                    Blend(ref r, ref g, ref b, ref a,
+                          GhostTokens.GlowR, GhostTokens.GlowG, GhostTokens.GlowB, halo);
 
                 if (fill > 0)
-                {
-                    // 箭头主体：近白
-                    var fr = 250.0;
-                    var fg = 250.0;
-                    var fb = 252.0;
-                    var fa = fill;
-                    Blend(ref r, ref g, ref b, ref a, fr, fg, fb, fa);
-                }
+                    Blend(ref r, ref g, ref b, ref a,
+                          GhostTokens.FillR, GhostTokens.FillG, GhostTokens.FillB,
+                          fill * GhostTokens.FillAlpha);
 
                 if (edge > 0)
-                {
-                    // 描边：深灰蓝
-                    Blend(ref r, ref g, ref b, ref a, 38, 42, 52, edge * 0.92);
-                }
+                    Blend(ref r, ref g, ref b, ref a,
+                          GhostTokens.StrokeR, GhostTokens.StrokeG, GhostTokens.StrokeB,
+                          edge * GhostTokens.StrokeAlpha);
+
+                if (a <= 0) continue;
 
                 var i = (py * sizePx + px) * 4;
                 var alpha = (byte)Math.Clamp(a * 255.0, 0, 255);
@@ -136,33 +152,48 @@ public static class CursorRaster
     }
 
     /// <summary>
-    /// 点击反馈环：progress 0→1 表示扩散过程。
-    /// 与 CursorRaster.RenderCursor 同尺寸，用于「鼠标按下」的视觉反馈。
+    /// 点击反馈环：progress 0→1 表示扩散过程（GhostTokens.ClickAnimationMs 内走完）。
+    /// 以箭头重心为圆心，浅冷白细环，快速淡出。与光标同尺寸，便于直接叠加。
     /// </summary>
     public static byte[] RenderClickRing(int sizePx, double progress)
     {
         if (sizePx < 8) sizePx = 8;
         progress = Math.Clamp(progress, 0, 1);
         var buf = new byte[sizePx * sizePx * 4];
-        var c = sizePx / 2.0;
-        var radius = sizePx * (0.16 + 0.30 * progress);
-        var thickness = Math.Max(1.5, sizePx * 0.02);
+
+        var scale = sizePx / GhostTokens.OverlayWidthDip;
+        var glyphW = GhostTokens.CursorGlyphWidthDip * scale;
+        var glyphH = GhostTokens.CursorGlyphHeightDip * scale;
+        var tipX = GhostTokens.TipXDip * scale;
+        var tipY = GhostTokens.TipYDip * scale;
+
+        var cx = tipX + glyphW * GhostTokens.GlowCenterX;
+        var cy = tipY + glyphH * GhostTokens.GlowCenterY;
+
+        var glowR = GhostTokens.GlowDiameterDip * scale / 2.0;
+        var radius = glowR * (0.20 + 0.80 * progress);
+        var thickness = Math.Max(1.0, GhostTokens.StrokeWidthDip * scale);
         var fade = 1.0 - progress;
 
-        for (var py = 0; py < sizePx; py++)
+        var minX = Math.Max(0, (int)(cx - radius - thickness - 2));
+        var maxX = Math.Min(sizePx - 1, (int)(cx + radius + thickness + 2));
+        var minY = Math.Max(0, (int)(cy - radius - thickness - 2));
+        var maxY = Math.Min(sizePx - 1, (int)(cy + radius + thickness + 2));
+
+        for (var py = minY; py <= maxY; py++)
         {
-            for (var px = 0; px < sizePx; px++)
+            for (var px = minX; px <= maxX; px++)
             {
-                var dx = px + 0.5 - c;
-                var dy = py + 0.5 - c;
+                var dx = px + 0.5 - cx;
+                var dy = py + 0.5 - cy;
                 var d = Math.Sqrt(dx * dx + dy * dy);
                 var band = Math.Abs(d - radius);
                 if (band > thickness) continue;
 
-                var k = (1 - band / thickness) * fade * 0.85;
-                var i = (py * sizePx + px) * 4;
+                var k = (1 - band / thickness) * fade * 0.55;
                 var a = Math.Clamp(k, 0, 1);
-                // 偏冷白
+                var i = (py * sizePx + px) * 4;
+                // 偏冷白，与光晕同色系
                 buf[i + 0] = (byte)(235 * a);
                 buf[i + 1] = (byte)(240 * a);
                 buf[i + 2] = (byte)(255 * a);

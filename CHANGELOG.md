@@ -5,6 +5,64 @@
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-11-17
+
+Windows Ghost Cursor 视觉精修。**只改显示层**，后台输入引擎、会话管理、
+结果验证口径一律未动；macOS 侧未改动。
+
+### 修复（根因）
+
+- **箭头被画成窗口那么大**：`CursorRaster` 的箭头多边形用 0..1 归一化坐标，
+  直接乘位图边长，于是 126px 位图里箭头实际画成 **59×91px**（200% DPI 下 117×183px），
+  是标准光标的 2–3 倍。现在箭头几何在自己的 glyph box（20×24 DIP）内计算，
+  与承载位图尺寸彻底解耦。
+- **描边过粗**：线宽按 `sizePx × 1.4%` 推导（126px → 3.5px 线，200% 下 7px）。
+  改为固定 **1.5 DIP**。
+- **重影**：叠加了一层向右下偏移 (2.5, 6.9)px 的深色投影，视觉上就是第二个箭头。
+  已**移除投影**。
+- **遮挡内容**：光晕半径按 `0.42 × sizePx`（直径 106px）+ 深色投影 + 巨大箭头，
+  三者叠起来把 126×126 几乎填满。现在光晕 **直径 56 DIP、不透明度 0.22**。
+- **热点偏移**：`Present()` 直接把覆盖层左上角放在目标坐标上，
+  但箭头尖端在图内还有 (24,24) 的偏移，视觉位置与真实点击位置差 24 DIP。
+  现在窗口原点回退 `TipX/TipY × scale`，实测偏差 **0px**（DWM 口径）。
+- **DPI 只在启动时算一次**：新增 `SyncDpi()`，每帧轻量比对 `GetDpiForWindow`，
+  跨显示器拖动或中途改缩放后按新 scale 重建位图。100%–200% 下箭头逻辑尺寸恒定 20×24 DIP。
+- **帧率与动画**：33ms（30fps）→ **16ms（60fps）**；点击反馈 260ms → **120ms**。
+
+### 性能
+
+渲染改为只扫「箭头 bbox ∪ 光晕圆」的包围盒（旧版全图逐像素 + 4×4 超采样）：
+
+| 位图 | 旧 | 新 | 提升 |
+|---|---|---|---|
+| 126px (100%) | 25.30 ms/帧 | 1.08 ms/帧 | 95.7% |
+| 252px (200%) | 96.63 ms/帧 | 4.77 ms/帧 | 95.1% |
+
+旧版在 200% DPI 下每帧 96ms，30fps 的 33ms 预算根本跑不动——这是 ghost 进程
+持续高 CPU 的直接原因；新版 4.77ms，60fps 预算（16.7ms）绰绰有余。
+
+### 新增
+
+- `Wbcu.Contract/GhostTokens.cs`：Ghost Cursor 设计令牌（窗口 / 箭头 / 描边 / 光晕 / 动效 / 配色），
+  与 `docs/ghost-cursor-tokens.md` 同步，作为 Windows 与 macOS 的共享视觉口径。
+- `docs/ghost-cursor-tokens.md`：令牌表 + 跨平台映射说明。
+
+### 修复（测试靶子）
+
+- **`wbcu-testapp-win32.exe` 仍崩**：`TextOutW` 声明在 `user32.dll`（实际 `gdi32.dll`），
+  与 0.6.1 修的 `GetStockObject` 是同一类错误。这导致 `wbcu-guitests` 的
+  click_uia / click_background / type_background 用例全部 FAIL（靶子没起来），
+  以及 click_occluded / click_wm_message 因「拿不到窗口矩形」而 SKIP。
+
+### 验证状态
+
+- 引擎单测 65/65（含 `CursorRaster` 的缓冲尺寸 / 四角全透明 / 有不透明像素 / 预乘断言）。
+- 真机（Windows 10 19045）：单实例（多次 move + click 后 overlay 窗口数恒为 1）、
+  窗口 126×126、exStyle `LAYERED|TRANSPARENT|NOACTIVATE|TOOLWINDOW|TOPMOST`、
+  热点对齐偏差 0px、`frontAppPreserved=true`、`physicalCursorPreserved=true`。
+- 视觉截图受限于真机处于锁屏状态（桌面无渲染输出，BitBlt 仅得纯色），
+  以渲染层逐像素对比图 + 窗口几何数据作为证据。
+
 ## [0.6.1] — 2026-11-17
 
 按 **Windows 10 19045 真机部署回执**修 5 项缺陷。回执结论是「可用」（记事本 UIA 写入 success /

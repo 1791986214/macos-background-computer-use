@@ -360,7 +360,9 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern bool EndPaint(IntPtr hWnd, ref PAINTSTRUCT ps);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    // TextOutW 也在 gdi32.dll。与上面的 GetStockObject 同一类错误：
+    // 声明错 DLL 编译期无感，运行时才抛 EntryPointNotFoundException。
+    [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
     private static extern bool TextOutW(IntPtr hdc, int x, int y, string s, int len);
 
     [DllImport("user32.dll")]

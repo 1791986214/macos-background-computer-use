@@ -12,6 +12,7 @@ using Wbcu.Windows.Session;
 using Wbcu.Windows.Trace;
 using Wbcu.Windows.Uia;
 using Wbcu.Windows.Verify;
+using Wbcu.Windows.Win32;
 
 namespace Wbcu.Windows.Commands;
 
@@ -825,17 +826,20 @@ public static class Commands
                 {
                     return ctx.Fail(new CliError(ErrorCodes.Internal, "拿不到自身可执行路径"));
                 }
-                var p = Process.Start(new ProcessStartInfo
+                var p = DetachedProcess.Start(new ProcessStartInfo
                 {
                     FileName = exe,
                     Arguments = "trace __daemon",
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     WindowStyle = ProcessWindowStyle.Hidden,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    RedirectStandardInput = true,
                 });
                 Thread.Sleep(200);
                 var pid = ActivationTrace.DaemonPid();
-                ctx.EmitObject(new { ok = pid != null, pid, started = p?.Id });
+                ctx.EmitObject(new { ok = pid != null, pid, started = p });
                 return pid != null ? ExitCodes.Ok : ExitCodes.Internal;
             }
 

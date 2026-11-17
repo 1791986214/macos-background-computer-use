@@ -5,6 +5,38 @@
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-11-17
+
+按 **Windows 10 19045 真机部署回执**修 5 项缺陷。回执结论是「可用」（记事本 UIA 写入 success /
+截图正常 / 未抢前台 / 未动鼠标），但暴露了 4 个 bug + 1 个打包缺陷。详见
+`docs/receipt-v0.6.0-windows-real-machine.md`。
+
+### 修复
+
+- **ghost / trace 守护进程继承调用方 stdout 导致调用方永久挂起**：新增 `DetachedProcess`
+  （三重定向 + 后台读空 + 关 stdin）。`--no-ghost` 不再是必要参数。
+  这一条影响面最大：PowerShell 管道、GUI 测试、任何 `ReadToEnd` 都会卡死。
+- **`launch` 传绝对路径异常退出（exit -1）**：启动异常全捕获，转结构化错误。
+- **`launch --app notepad` 被解析到 Git 的 `usr/bin/notepad`**：候选顺序改为
+  用户路径 → System32/SysWOW64 → App Paths → PATH，且每个候选过 `MZ` 头校验。
+- **输出编码随控制台代码页（GBK）导致 JSON 解析失败**：启动即设 UTF-8（无 BOM），
+  并且结果 JSON 一律 `\uXXXX` 转义为纯 ASCII —— 调用方用什么代码页都能解析。
+- **`wbcu-guitests.exe` 空转 335s CPU 零产出**：异步读 stdout/stderr（消除同步读死锁点），
+  单命令 90s / 单用例 300s 看门狗，超时杀进程树，每例打印耗时。
+- **`wbcu-testapp-win32.exe` 启动即崩**：`GetStockObject` 从 `user32.dll` 改为 `gdi32.dll`。
+
+### 文档
+
+- 新增 `docs/receipt-v0.6.0-windows-real-machine.md`：回执原文要点 + 逐条修复映射 + 重跑步骤。
+- `docs/windows-installation.md` 补充：GitHub 直连不通时的 `WBCU_LOCAL_ZIP` 离线路径；
+  引擎只需 .NET Core 运行时、`testapps` 才需要 Desktop 运行时。
+
+### 验证状态
+
+- 引擎单测 65/65；macOS `selftest 53/53`；契约 `PARITY OK`。
+- Windows GUI 套件仍未跑绿（回执里那次是空转，已修），`capabilities` 相关项保持 `not_tested`。
+
+
 ## [0.6.0] — 2026-11-16
 
 **macOS 引擎保持 v0.5.x 的成熟行为（仅新增 `contract` 命令），新增 Windows 原生引擎，

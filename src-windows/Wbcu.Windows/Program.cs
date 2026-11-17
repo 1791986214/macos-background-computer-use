@@ -7,6 +7,16 @@ internal static class Program
 {
     private static int Main(string[] argv)
     {
+        // 先固定输出编码：Windows 默认代码页是 936/437，
+        // 中文文本 + 重定向会让调用方按本地代码页解码失败（真机回执：JSON 解析 UnicodeDecodeError）。
+        // 这里显式用 UTF-8（无 BOM）；JSON 另外再做成纯 ASCII 转义，双保险。
+        try
+        {
+            Console.OutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            Console.InputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+        }
+        catch { }
+
         if (argv.Length == 0 || argv[0] is "-h" or "--help" or "help")
         {
             Usage();

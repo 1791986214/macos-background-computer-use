@@ -41,52 +41,107 @@ public static class Launcher
 
     public static LaunchResult LaunchExe(string exePath, bool foreground)
     {
-        var si = new Native.STARTUPINFO
+        try
         {
-            cb = Marshal.SizeOf<Native.STARTUPINFO>(),
-            dwFlags = (int)Native.STARTF_USESHOWWINDOW,
-            wShowWindow = (short)(foreground ? Native.SW_SHOWNORMAL : Native.SW_SHOWNOACTIVATE),
-        };
+            if (!File.Exists(exePath))
+            {
+                return new LaunchResult { Ok = false, Executable = exePath, Detail = $"文件不存在：{exePath}" };
+            }
+            if (!IsWindowsExecutable(exePath))
+            {
+                return new LaunchResult
+                {
+                    Ok = false,
+                    Executable = exePath,
+                    Detail = $"不是 Windows 可执行文件（没有 MZ 头）：{exePath}。"
+                             + "常见原因是 PATH 里先命中了 MSYS/Git 的 shell 脚本同名文件。",
+                };
+            }
 
-        var cmd = "\"" + exePath + "\"";
-        var ok = Native.CreateProcessW(exePath, cmd, IntPtr.Zero, IntPtr.Zero, false,
-                                       Native.CREATE_NO_WINDOW, IntPtr.Zero,
-                                       Path.GetDirectoryName(exePath), ref si, out var pi);
+            var si = new Native.STARTUPINFO
+            {
+                cb = System.Runtime.InteropServices.Marshal.SizeOf<Native.STARTUPINFO>(),
+                dwFlags = (int)Native.STARTF_USESHOWWINDOW,
+                wShowWindow = (short)(foreground ? Native.SW_SHOWNORMAL : Native.SW_SHOWNOACTIVATE),
+            };
 
-        if (!ok)
+            var cmd = "\"" + exePath + "\"";
+            var cwd = Path.GetDirectoryName(exePath);
+            if (string.IsNullOrEmpty(cwd) || !Directory.Exists(cwd)) cwd = null;
+
+            var ok = Native.CreateProcessW(exePath, cmd, IntPtr.Zero, IntPtr.Zero, false,
+                                           Native.CREATE_NO_WINDOW, IntPtr.Zero,
+                                           cwd, ref si, out var pi);
+
+            if (!ok)
+            {
+                var err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                return new LaunchResult
+                {
+                    Ok = false,
+                    Executable = exePath,
+                    Detail = "CreateProcess 失败 (Win32 " + err + ")"
+                             + (err == 193 ? "：目标不是有效的 Win32 应用" : ""),
+                };
+            }
+
+            Native.CloseHandle(pi.hThread);
+            Native.CloseHandle(pi.hProcess);
+
+            return new LaunchResult
+            {
+                Ok = true,
+                Pid = pi.dwProcessId,
+                Executable = exePath,
+                ActivatedToForeground = foreground,
+                Detail = foreground
+                    ? "前台启动（SW_SHOWNORMAL）"
+                    : "后台启动（SW_SHOWNOACTIVATE）：请求了不激活，实际是否被系统带到前台以 frontAppPreserved 为准",
+            };
+        }
+        catch (Exception ex)
         {
-            var err = Marshal.GetLastWin32Error();
+            // 绝不把异常变成「进程异常退出 + 退出码 -1」，那对调用方是无法诊断的
             return new LaunchResult
             {
                 Ok = false,
                 Executable = exePath,
-                Detail = $"CreateProcess 失败 (Win32 {err})",
+                Detail = "启动异常：" + ex.GetType().Name + ": " + ex.Message,
             };
         }
+    }
 
-        Native.CloseHandle(pi.hThread);
-        Native.CloseHandle(pi.hProcess);
-
-        return new LaunchResult
+    /// <summary>PE 校验：Windows 可执行文件必须以 "MZ" 开头。用来挡掉 PATH 里的同名脚本。</summary>
+    public static bool IsWindowsExecutable(string path)
+    {
+        try
         {
-            Ok = true,
-            Pid = pi.dwProcessId,
-            Executable = exePath,
-            ActivatedToForeground = foreground,
-            Detail = foreground ? "前台启动" : "后台启动（SW_SHOWNOACTIVATE）",
-        };
+            using var fs = File.OpenRead(path);
+            var head = new byte[2];
+            if (fs.Read(head, 0, 2) != 2) return false;
+            return head[0] == (byte)'M' && head[1] == (byte)'Z';
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
-    /// 解析可执行文件。顺序：绝对路径 → 系统目录 → App Paths 注册表 → PATH 扫描。
-    /// 不猜、不模糊匹配：找不到就返回 null，让上层报 app_not_found。
+    /// 解析可执行文件。顺序刻意如此：
+    ///   1) 用户给的路径（存在即用）
+    ///   2) System32 / SysWOW64 —— **优先于 PATH**：Windows 上 PATH 经常含 Git/MSYS 的
+    ///      usr\bin，里面有同名 shell 脚本（真机回执：notepad 被解析到 Git 的 usr\bin\notepad）
+    ///   3) App Paths 注册表（应用自注册的正式入口）
+    ///   4) PATH（每个候选都要过 PE 校验）
+    /// 不猜、不模糊匹配：都不中返回 null，让上层报 app_not_found。
     /// </summary>
     public static string? ResolveExecutable(string token)
     {
         if (string.IsNullOrWhiteSpace(token)) return null;
         var t = token.Trim().Trim('"');
 
-        if (File.Exists(t)) return Path.GetFullPath(t);
+        if (File.Exists(t) && IsWindowsExecutable(t)) return Path.GetFullPath(t);
 
         var candidates = new List<string>();
         if (!t.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) candidates.Add(t + ".exe");
@@ -95,10 +150,14 @@ public static class Launcher
         foreach (var name in candidates)
         {
             var sys = Path.Combine(Environment.SystemDirectory, name);
-            if (File.Exists(sys)) return sys;
+            if (File.Exists(sys) && IsWindowsExecutable(sys)) return sys;
 
-            var sysWow = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.SystemX86), name);
-            if (File.Exists(sysWow)) return sysWow;
+            var sysWow = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.SystemX86), name);
+            if (File.Exists(sysWow) && IsWindowsExecutable(sysWow)) return sysWow;
+
+            var appPath = FromAppPaths(name);
+            if (appPath != null && IsWindowsExecutable(appPath)) return appPath;
 
             foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';'))
             {
@@ -106,13 +165,10 @@ public static class Launcher
                 try
                 {
                     var p = Path.Combine(dir.Trim(), name);
-                    if (File.Exists(p)) return p;
+                    if (File.Exists(p) && IsWindowsExecutable(p)) return p;
                 }
                 catch { }
             }
-
-            var fromRegistry = FromAppPaths(name);
-            if (fromRegistry != null) return fromRegistry;
         }
 
         return null;

@@ -1,6 +1,6 @@
 ---
 name: workbuddy-third-hand
-version: 0.6.0
+version: 0.6.1
 description: WorkBuddy Third Hand —— 给 WorkBuddy 的第三只手，macOS 与 Windows 双平台。用各自平台的原生技术（macOS：ScreenCaptureKit + Accessibility + 进程级事件投递；Windows：Windows.Graphics.Capture + UI Automation + 定向窗口消息）在后台操作指定应用，优先不抢占用户真实鼠标、不切换前台、不抢键盘焦点，并且每次操作都读值验证。当用户要求「帮我操作另一个应用」「在后台完成桌面任务」「不要影响我正在用的鼠标」「读一下另一个应用里的信息」「点一下那个按钮」「同时在两个应用里干活」「用虚拟鼠标操作某个窗口」，或需要在计算器 / 记事本 / 文件资源管理器 / Finder / 文本编辑 / Electron 应用里做自动化时使用。
 agent_created: true
 ---
@@ -127,6 +127,10 @@ wbcu.exe attach --app calc --json            # ④ 建会话（同名会话自�
 - 会话 id 形如 `s26010112000012ab`。**两种寻址都行**：`--id <sid>` 或 `--app <令牌>`。
   **不要每步重新 attach。**
 - Windows 应用令牌可以是：pid、`calc.exe`、`calc`、包族名、AUMID、窗口标题片段、`0x1A2B`（HWND）。
+- `launch` 会按 用户路径 → System32 → App Paths → PATH 找可执行文件，并校验 PE 头；
+  找不到就报 `app_not_found`，**不会**随便命中 PATH 里的同名脚本。也可以用系统自己启动再 `attach`。
+- 结果 JSON 是**纯 ASCII**（中文转义成 `\uXXXX`），任何代码页下都能直接解析；
+  0.6.0 时代的「按 GBK 解」不需要了。
 
 ---
 

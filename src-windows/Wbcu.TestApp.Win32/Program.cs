@@ -349,7 +349,9 @@ internal static class Program
     [DllImport("user32.dll")]
     private static extern IntPtr LoadCursorW(IntPtr inst, IntPtr name);
 
-    [DllImport("user32.dll")]
+    // GetStockObject 在 gdi32.dll，不是 user32.dll。
+    // 声明错 DLL 不会编译报错，只会在启动时抛 EntryPointNotFoundException（真机回执里就是这么崩的）。
+    [DllImport("gdi32.dll")]
     private static extern IntPtr GetStockObject(int id);
 
     [DllImport("user32.dll")]

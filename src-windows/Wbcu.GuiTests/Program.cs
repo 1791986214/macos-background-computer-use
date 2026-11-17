@@ -25,6 +25,9 @@ internal static class Program
     private static string _wbcu = "";
     private static string _testApp = "";
     private static string _session = "";
+    private static bool _verbose;
+    private const int CommandTimeoutMs = 90_000;
+    private const int CaseTimeoutMs = 300_000;
     private static readonly List<CaseResult> Results = new();
 
     private sealed class CaseResult
@@ -41,6 +44,7 @@ internal static class Program
         _wbcu = args.GetValueOrDefault("wbcu", FindSibling("wbcu.exe"));
         _testApp = args.GetValueOrDefault("app", FindSibling("wbcu-testapp-win32.exe"));
         var only = args.GetValueOrDefault("only", "");
+        _verbose = args.ContainsKey("verbose");
         var jsonOut = args.GetValueOrDefault("json", "gui-test-report.json");
 
         Console.WriteLine($"wbcu      = {_wbcu}");
@@ -78,16 +82,31 @@ internal static class Program
         {
             if (only.Length > 0 && !name.Contains(only, StringComparison.OrdinalIgnoreCase)) continue;
             Console.Write($"[{name}] ... ");
+            var started = DateTime.UtcNow;
             try
             {
-                body();
+                // 看门狗：任何用例卡住 5 分钟就判 fail，绝不静默空转到「335s 零产出」
+                var task = System.Threading.Tasks.Task.Run(body);
+                if (!task.Wait(CaseTimeoutMs))
+                {
+                    Add(name, "fail", $"用例超时（{CaseTimeoutMs / 1000}s）：卡在某个 wbcu 调用上");
+                }
+                else
+                {
+                    task.GetAwaiter().GetResult();
+                }
+            }
+            catch (AggregateException ae) when (ae.InnerException != null)
+            {
+                Add(name, "fail", "未捕获异常：" + ae.InnerException.GetType().Name + " " + ae.InnerException.Message);
             }
             catch (Exception ex)
             {
                 Add(name, "fail", "未捕获异常：" + ex.GetType().Name + " " + ex.Message);
             }
-            var last = Results[^1];
-            Console.WriteLine($"{last.Status.ToUpperInvariant()}  {Truncate(last.Detail, 110)}");
+            var last = Results.Count > 0 ? Results[^1] : new CaseResult { Name = name, Status = "fail", Detail = "无结果" };
+            var elapsed = (DateTime.UtcNow - started).TotalSeconds;
+            Console.WriteLine($"{last.Status.ToUpperInvariant(),-4} {elapsed,6:0.0}s  {Truncate(last.Detail, 100)}");
         }
 
         // 收尾：结束会话与覆盖层
@@ -418,6 +437,8 @@ internal static class Program
 
     private static (int Code, string Output) Run(string args)
     {
+        if (_verbose) Console.Write($"\n    > wbcu {args}\n    ");
+
         var psi = new ProcessStartInfo
         {
             FileName = _wbcu,
@@ -427,11 +448,25 @@ internal static class Program
             RedirectStandardError = true,
             CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
+
         using var p = Process.Start(psi)!;
-        var stdout = p.StandardOutput.ReadToEnd();
-        var stderr = p.StandardError.ReadToEnd();
-        p.WaitForExit(240_000);
+
+        // 必须异步读：同步 ReadToEnd + 先读 stdout 再读 stderr 是经典死锁点，
+        // 而只要有一个子进程（历史上是 ghost 守护进程）继承了句柄，就永远等不到 EOF。
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+
+        if (!p.WaitForExit(CommandTimeoutMs))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { }
+            var partial = (stdoutTask.IsCompleted ? stdoutTask.Result : "") + "\n[TIMEOUT]";
+            return (-9, partial.Trim());
+        }
+
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
         if (p.ExitCode != 0 && stdout.Trim().Length == 0) stdout = stderr;
         return (p.ExitCode, stdout);
     }

@@ -109,7 +109,10 @@ public static class Json
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         WriteIndented = pretty,
-        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        // 刻意用 Default 编码（非 ASCII 一律 \uXXXX 转义）：
+        // 结果 JSON 会被 PowerShell / Python / Node 等不同代码页的调用方解析，
+        // 纯 ASCII 的 JSON 才能让「谁解析都对」。代价是肉眼可读性略降，值得。
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Default,
         Converters = { new VerifyCategoryConverter(), new JsonStringEnumConverter() },
     };
 

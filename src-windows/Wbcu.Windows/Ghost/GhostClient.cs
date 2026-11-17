@@ -83,10 +83,15 @@ public static class GhostClient
             UseShellExecute = false,
             CreateNoWindow = true,
             WindowStyle = ProcessWindowStyle.Hidden,
+            // 必须重定向：否则守护进程继承调用方的 stdout/stderr 句柄，
+            // 调用方（PowerShell 管道、GUI 测试、任何 ReadToEnd）会等不到 EOF 而永久挂起。
+            // 真机回执里「不带 --no-ghost 就卡死」就是这一条。
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
         };
 
-        var p = Process.Start(psi);
-        return p?.Id;
+        return DetachedProcess.Start(psi);
     }
 
     /// <summary>优雅关闭 → 等 → 强杀 → 复核。绝不"报告已停止但进程还在"。</summary>

@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-let VERSION = "0.6.0"
+let VERSION = "0.6.1"
 
 func usage() {
     print("""

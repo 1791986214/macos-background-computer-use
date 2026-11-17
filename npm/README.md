@@ -42,8 +42,8 @@ wbcu doctor
 
 | 平台 | 资产 | 状态 |
 |---|---|---|
-| `win32-x64` | `wbcu-windows-win-x64-0.6.0.zip` | 可装；**真机 GUI 验收未做** |
-| `darwin-arm64` | `wbcu-macos-arm64-0.6.0.zip` | 可装；本机 `selftest 53/53` 已验证 |
+| `win32-x64` | `wbcu-windows-win-x64-0.6.1.zip` | 可装；**真机 GUI 验收未做** |
+| `darwin-arm64` | `wbcu-macos-arm64-0.6.1.zip` | 可装；本机 `selftest 53/53` 已验证 |
 | `win32-arm64` / `darwin-x64` | — | 未发布，装的时候会明确报不支持 |
 
 ## 边界（不要当成已支持）

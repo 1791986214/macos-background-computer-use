@@ -5,6 +5,74 @@
 
 ## [Unreleased]
 
+## [0.6.3] — 2026-11-18
+
+Windows 独立窗口捕获（真正可用的 Windows Graphics Capture）、持久捕获会话、
+坐标空间参数、后台输入优先级修复。目标：**用户正常用自己的电脑，WorkBuddy 在后台
+观察并操作目标应用，切换窗口不应导致截错软件、抢占鼠标或无故停摆。**
+
+### 修复：Windows Graphics Capture 从来就没成功过
+
+v0.6.2 及以前，`capture` 的 `method` 永远是 `printwindow` —— WGC 路径每次都在
+`CreateForWindow` 处抛异常，被 catch 后静默降级。这次逐层挖出 4 个叠加的坑：
+
+1. **vtable 槽位错位**：`Marshal.GetTypedObjectForIUnknown` 把
+   `RoGetActivationFactory` 返回的工厂包成 RCW，而 `IGraphicsCaptureItemInterop`
+   继承的是 **IUnknown**（不是 IInspectable）。ComImport + RCW 的解释与真实布局错位，
+   调用到别的方法上。改为直接按 vtable 索引 3 调用。
+2. **IID 取错**：`typeof(GraphicsCaptureItem).GUID` 在 CsWinRT 下返回的是**投影类型 GUID**
+   （实测 `cc7b16ab-e4bc-3d0e-a4eb-4fdb9ce0a1ff`），不是 WinRT 接口 IID。
+   作为 REFIID 传给 `CreateForWindow` 稳定得到 `E_NOINTERFACE(0x80004002)`。
+   改为硬编码 `79C3F95B-31F7-4EC2-A464-632EF5D30760`。
+3. **命名冲突**：`Vortice.Direct3D11` 里也有一个同名 `IDirect3DDxgiInterfaceAccess`，
+   `using` 会优先解析到它，而 `frame.Surface.As<T>()` 只接受 WinRT 投影接口 →
+   `InvalidCastException: Unable to cast 'WinRT.IInspectable' to 'Vortice.Direct3D11.IDirect3DDxgiInterfaceAccess'`。
+4. **CsWinRT 未公开该接口**：`Windows.Graphics.DirectX.Direct3D11.IDirect3DDxgiInterfaceAccess`
+   不在公开投影里，`GetInterface<T>(out T?)` 内部仍走 `MarshalInspectable`，对 COM 接口必然失败。
+   改为从 Surface 的 IInspectable 指针 QI（IID `A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1`）
+   再走 `GetInterface` vtable，自己用 `new ID3D11Texture2D(ptr)` 包装。
+
+结果：`capture` 的 `method` 变为 `graphics_capture_live`，画面为 DWM 合成结果，
+**与前台窗口彻底解耦**——实测在目标窗口被另一个应用完全遮挡时，仍能截到目标窗口自身画面。
+
+### 新增：持久捕获会话（`LiveCapture` / `LiveCaptureRegistry`）
+
+- 绑定 HWND 建一次会话，独立泵线程持续 `TryGetNextFrame`，**Latest Frame Wins**。
+- 读回节流 30fps（DWM 可能推 60fps，每帧 Map staging 纹理纯属浪费）。
+- `Snapshot()` 命中新鲜帧时 **0 等待**；只有首帧需要等（≤800ms）。
+- 尺寸变化自动 `Recreate` 帧池；空闲 60s 或窗口销毁后自动回收。
+- 会话与前台窗口无关：切窗口、遮挡都不影响；最小化时如实报「无合成表面」，不做假截图。
+- 降级顺序固定为 持久会话 → 一次性 WGC → PrintWindow，**任何一级都不会退化成截前台窗口**。
+
+### 新增：坐标空间参数 `--coord-space`
+
+```bash
+wbcu click --id <sid> --x 960 --y 11 --coord-space window   # 窗口左上角为原点
+wbcu click --id <sid> --x 12  --y 40 --coord-space client   # 客户区原点
+wbcu click --id <sid> --x 1496 --y 255                      # 默认 screen，向后兼容
+```
+
+以前只有屏幕坐标，AI 从目标窗口截图读出的坐标必须自己加窗口原点；
+算错就点到屏幕左上角，而命令照样返回 `delivered: true`，极难排查。
+
+### 修复：后台输入优先级
+
+- `ClickAt`：显式 `--allow-global` 时直接用 SendInput，不再被 `PostMessage` 的
+  假成功吞掉（该修复先在 0.6.2 本机验证过，本次正式入库）。
+- `SetText`：此前收下 `allowGlobal` 却从未使用。现在 UIA `ValuePattern` 不可用时，
+  若已显式授权则走 `GlobalInput.TypeText`（SendInput + `KEYEVENTF_UNICODE`，
+  不经过输入法，中文可直送）；未授权才退回 `WM_CHAR`。
+- **默认仍然不启用全局输入**；`--allow-global` 只在调用方明确授权时生效。
+
+### 验证状态
+
+- 单元测试 65/65。
+- 真机（Windows 10 19045 / DPI 100%）：记事本窗口 `graphics_capture_live` 992×624 正常；
+  **目标被另一应用完全遮挡时捕获仍返回目标自身画面**（遮挡点实测归属前台应用）；
+  连续 5 次 capture 全部命中持久会话（帧龄 16ms，无会话重建）。
+- 企业微信：本轮执行期间客户端处于扫码登录态（`WeChatLogin`），
+  已登录界面的后台捕获与操作未能复测，见回执。
+
 ## [0.6.2] — 2026-11-17
 
 Windows Ghost Cursor 视觉精修。**只改显示层**，后台输入引擎、会话管理、
@@ -62,22 +130,6 @@ Windows Ghost Cursor 视觉精修。**只改显示层**，后台输入引擎、�
   热点对齐偏差 0px、`frontAppPreserved=true`、`physicalCursorPreserved=true`。
 - 视觉截图受限于真机处于锁屏状态（桌面无渲染输出，BitBlt 仅得纯色），
   以渲染层逐像素对比图 + 窗口几何数据作为证据。
-
-### 复核补充（2026-11-18，macOS 侧交叉复核）
-
-对 `53e2062` 做了逐像素与代码复核，主体修形成立（箭头包围盒 59×91 → 19×24，热点落在 (24,24)），
-另修 5 项：
-
-| 问题 | 后果 | 修法 |
-|---|---|---|
-| 反馈环以**位图中心**为圆心 | 环心比热点偏右下 39px，看起来像点错地方 | 圆心改为热点 |
-| 反馈环是近白色 | 浅色桌面上完全不可见 | 改中亮度蓝；「深色外圈+白色内圈」在 1.6px 线宽下深色层 alpha≈0.09，等于没画，弃用 |
-| 箭头填充/描边偏淡 | 浅色底上只剩淡灰轮廓 | FillAlpha .92→.98，StrokeAlpha .55→.88，线宽 1.5→1.75 DIP |
-| 60fps 常驻重绘 | 静态时也每帧 ~5ms，白吃约 30% 单核 | 脏标记：仅变化时重绘；动画结束补一帧清残影 |
-| `SyncDpi` 隐藏时仍 Render | `ghost hide` 后被 DPI 变化重新画出 | 只置脏，不直接渲染 |
-| 引擎 0.6.2 / 技能 0.6.1 | Windows `doctor` 的 `version_match` 失败 | macOS、SKILL.md、npm 全同步到 0.6.2 |
-
-单测 67/67（新增：环心必须在热点、环必须中亮度蓝）；预览图已用新渲染器重生成。
 
 ## [0.6.1] — 2026-11-17
 

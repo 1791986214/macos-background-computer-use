@@ -47,7 +47,7 @@ public sealed class CaptureResult
 /// </summary>
 public static class WindowCapture
 {
-    public static CaptureResult Capture(IntPtr hwnd, bool preferGraphicsCapture = true)
+    public static CaptureResult Capture(IntPtr hwnd, bool preferGraphicsCapture = true, bool useLiveSession = true)
     {
         if (hwnd == IntPtr.Zero || !Native.IsWindow(hwnd))
         {
@@ -64,6 +64,37 @@ public static class WindowCapture
                 Method = "none",
                 Failure = "窗口已最小化：Windows 不为其保留合成表面，无法后台截图（需先还原窗口）",
             };
+        }
+
+        // ① 持久会话：命中即 0 等待（用户切窗口、遮挡都不影响，会话绑的是这个 HWND）
+        if (useLiveSession && preferGraphicsCapture)
+        {
+            var live = LiveCaptureRegistry.TrySnapshot(hwnd, maxAgeMs: 800, waitMs: 250, out var liveError);
+            if (live != null) return live;
+
+            // 会话拿不到帧时，记录原因继续往下降级，绝不改成截前台窗口
+            CaptureResult? once = null;
+            string? onceError = null;
+            try
+            {
+                once = GraphicsCaptureBackend.Once(hwnd);
+            }
+            catch (Exception ex)
+            {
+                onceError = ex.GetType().Name + ": " + ex.Message;
+            }
+
+            if (once is { Ok: true })
+            {
+                if (!string.IsNullOrEmpty(liveError)) once.Warnings.Add("持久会话未取到帧：" + liveError + "，已改用一次性捕获");
+                return once;
+            }
+
+            var pw = PrintWindowBackend.Capture(hwnd);
+            if (!string.IsNullOrEmpty(liveError)) pw.Warnings.Add("持久会话未取到帧：" + liveError);
+            if (onceError != null) pw.Warnings.Add("一次性 Graphics Capture 异常：" + onceError);
+            else if (once?.Failure != null) pw.Warnings.Add("Graphics Capture 未取到帧：" + once.Failure);
+            return pw;
         }
 
         CaptureResult? result = null;
@@ -84,9 +115,9 @@ public static class WindowCapture
 
         if (result is { Ok: true }) return result;
 
-        var pw = PrintWindowBackend.Capture(hwnd);
-        if (result != null && result.Failure != null) pw.Warnings.Add("Graphics Capture 未取到帧：" + result.Failure);
-        return pw;
+        var pwFallback = PrintWindowBackend.Capture(hwnd);
+        if (result != null && result.Failure != null) pwFallback.Warnings.Add("Graphics Capture 未取到帧：" + result.Failure);
+        return pwFallback;
     }
 
     /// <summary>GDI PrintWindow 路径。同步、无依赖，作为兜底。</summary>
@@ -161,6 +192,10 @@ public static class WindowCapture
     /// </summary>
     public static class GraphicsCaptureBackend
     {
+        /// <summary>GraphicsCaptureItem 的 WinRT 接口 IID。</summary>
+        private static readonly Guid GraphicsCaptureItemIid =
+            new("79C3F95B-31F7-4EC2-A464-632EF5D30760");
+
         [DllImport("combase.dll", ExactSpelling = true)]
         private static extern int RoGetActivationFactory(IntPtr activatableClassId, ref Guid iid, out IntPtr factory);
 
@@ -253,7 +288,7 @@ public static class WindowCapture
             }
         }
 
-        private static GraphicsCaptureItem CreateItem(IntPtr hwnd)
+        internal static GraphicsCaptureItem CreateItem(IntPtr hwnd)
         {
             var className = "Windows.Graphics.Capture.GraphicsCaptureItem";
             var hr = WindowsCreateString(className, className.Length, out var hstring);
@@ -278,12 +313,25 @@ public static class WindowCapture
                     throw new InvalidOperationException($"QI IGraphicsCaptureItemInterop 失败 0x{hr:X8}");
                 }
 
-                var interop = (IGraphicsCaptureItemInterop)Marshal.GetTypedObjectForIUnknown(
-                    interopPtr, typeof(IGraphicsCaptureItemInterop));
+                // 关键修复：不要用 Marshal.GetTypedObjectForIUnknown 把 WinRT 工厂包成 RCW。
+                //
+                // 那是 v0.6.2 及以前 WGC 一直拿不到帧的真因：
+                // RoGetActivationFactory 返回的是 **IInspectable 派生** 接口，
+                // vtable 布局是 [QI, AddRef, Release, GetIids, GetRuntimeClassName, GetTrustLevel, CreateForWindow, ...]；
+                // 而 ComImport + InterfaceIsIUnknown 让 RCW 按「IUnknown 派生」解释，
+                // 从第 4 个槽开始取方法 —— 正好错位三格，调用到 GetIids，
+                // 于是每次都是 InvalidCastException / 参数错乱，永远进不了 CreateForWindow。
+                //
+                // 这里直接按 vtable 索引 6 调用，绕开 RCW 的类型系统。签名：
+                //   HRESULT CreateForWindow(HWND window, REFIID iid, void** result)
                 try
                 {
-                    var iidItem = typeof(GraphicsCaptureItem).GUID;
-                    var itemPtr = interop.CreateForWindow(hwnd, ref iidItem);
+                    // 必须用 WinRT 接口的真实 IID，不能用 typeof(GraphicsCaptureItem).GUID。
+                    // CsWinRT 给投影类型生成的是 TypeGuid（实测 cc7b16ab-e4bc-3d0e-a4eb-4fdb9ce0a1ff），
+                    // 把它当 REFIID 传给 CreateForWindow 会稳定得到 E_NOINTERFACE(0x80004002)——
+                    // 这是 WGC 在本仓库长期取不到帧的第二个坑，和 vtable 槽位错位叠加在一起。
+                    var iidItem = GraphicsCaptureItemIid;
+                    var itemPtr = CreateForWindowRaw(interopPtr, hwnd, ref iidItem);
                     if (itemPtr == IntPtr.Zero)
                     {
                         throw new InvalidOperationException("CreateForWindow 返回空指针");
@@ -308,7 +356,54 @@ public static class WindowCapture
             }
         }
 
-        private static IDirect3DDevice CreateWinRtDevice(ID3D11Device d3dDevice)
+        /// <summary>
+        /// 直接按 vtable 调用 CreateForWindow。
+        ///
+        /// IGraphicsCaptureItemInterop 继承的是 **IUnknown**（不是 IInspectable），
+        /// 所以 QueryInterface 后的 vtable 是：
+        ///   0 QueryInterface / 1 AddRef / 2 Release / 3 CreateForWindow / 4 CreateForMonitor
+        ///
+        /// 索引写错（比如按 IInspectable 的 6）不会崩，而是调到别的方法上，
+        /// 表现就是一串每次都不一样的垃圾 HRESULT —— 这个坑实测踩过一次。
+        /// </summary>
+        private static unsafe IntPtr CreateForWindowRaw(IntPtr interopPtr, IntPtr hwnd, ref Guid iid)
+        {            var vtbl = *(IntPtr**)interopPtr;
+            var fn = vtbl[3];
+            var call = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, Guid*, IntPtr*, int>)fn;
+
+            var localIid = iid;
+            IntPtr itemPtr;
+            var hr = call(interopPtr, hwnd, &localIid, &itemPtr);
+            if (hr < 0)
+            {
+                throw new InvalidOperationException(
+                    $"CreateForWindow 失败 HRESULT=0x{hr:X8} iid={localIid} hwnd=0x{hwnd.ToInt64():X}");
+            }
+            return itemPtr;
+        }
+
+        /// <summary>
+        /// 直接按 vtable 调用 IDirect3DDxgiInterfaceAccess.GetInterface（槽位 3），
+        /// 绕开 CsWinRT 的 MarshalInspectable 转换——那条路对 Vortice 的 COM 接口类型必然 cast 失败。
+        /// 签名：HRESULT GetInterface(REFIID riid, void** ppvObject)
+        /// </summary>
+        private static unsafe IntPtr GetDxgiInterfaceRaw(IntPtr accessPtr, Guid iid)
+        {
+            var vtbl = *(IntPtr**)accessPtr;
+            var fn = vtbl[3];
+            var call = (delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, int>)fn;
+
+            var localIid = iid;
+            IntPtr result;
+            var hr = call(accessPtr, &localIid, &result);
+            if (hr < 0)
+            {
+                throw new InvalidOperationException($"GetInterface 失败 HRESULT=0x{hr:X8} iid={localIid}");
+            }
+            return result;
+        }
+
+        internal static IDirect3DDevice CreateWinRtDevice(ID3D11Device d3dDevice)
         {
             using var dxgi = d3dDevice.QueryInterface<IDXGIDevice>();
             var hr = CreateDirect3D11DeviceFromDXGIDevice(dxgi.NativePointer, out var inspectable);
@@ -326,11 +421,42 @@ public static class WindowCapture
             }
         }
 
-        private static CaptureResult ReadbackFrame(Direct3D11CaptureFrame frame, ID3D11Device device, ID3D11DeviceContext context)
+        internal static CaptureResult ReadbackFrame(Direct3D11CaptureFrame frame, ID3D11Device device, ID3D11DeviceContext context)
         {
-            var access = frame.Surface.As<IDirect3DDxgiInterfaceAccess>();
-            using var texture = access.GetInterface<ID3D11Texture2D>();
-            var desc = texture.Description;
+            // CsWinRT 的公开投影里**没有** IDirect3DDxgiInterfaceAccess（只有 Vortice 那个同名 SharpGen 接口，
+            // 它对 frame.Surface.As<T>() 不适用）。所以从 Surface 的 IInspectable 指针直接 QI：
+            //   IID_IDirect3DDxgiInterfaceAccess = A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1
+            // 再走它的 vtable[3] GetInterface(IID_ID3D11Texture2D)。
+            var surfacePtr = MarshalInspectable<global::Windows.Graphics.DirectX.Direct3D11.IDirect3DSurface>
+                .FromManaged(frame.Surface);
+
+            IntPtr texturePtr = IntPtr.Zero;
+            try
+            {
+                var iidAccess = new Guid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1");
+                var hrQi = Marshal.QueryInterface(surfacePtr, ref iidAccess, out var accessPtr);
+                if (hrQi != 0 || accessPtr == IntPtr.Zero)
+                {
+                    throw new InvalidOperationException($"QI IDirect3DDxgiInterfaceAccess 失败 0x{hrQi:X8}");
+                }
+                try
+                {
+                    texturePtr = GetDxgiInterfaceRaw(accessPtr, new Guid("6F15AAF2-D208-4E89-9AB4-489535D34F9C"));
+                }
+                finally
+                {
+                    Marshal.Release(accessPtr);
+                }
+            }
+            finally
+            {
+                Marshal.Release(surfacePtr);
+            }
+
+            if (texturePtr == IntPtr.Zero) throw new InvalidOperationException("GetInterface(ID3D11Texture2D) 返回空指针");
+
+            using var ownedTexture = new ID3D11Texture2D(texturePtr);
+            var desc = ownedTexture.Description;
             var w = (int)desc.Width;
             var h = (int)desc.Height;
 
@@ -348,7 +474,7 @@ public static class WindowCapture
                 MiscFlags = ResourceOptionFlags.None,
             });
 
-            context.CopyResource(staging, texture);
+            context.CopyResource(staging, ownedTexture);
             var map = context.Map(staging, 0, Vortice.Direct3D11.MapMode.Read);
             try
             {

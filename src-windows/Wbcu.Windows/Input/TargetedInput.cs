@@ -35,18 +35,11 @@ public static class TargetedInput
         var target = DeepestChildAt(windowHwnd, screenX, screenY);
         if (target == IntPtr.Zero) target = windowHwnd;
 
-        var posted = PostClick(target, screenX, screenY, out var why);
-        outcome.Method = MethodWmMessage;
-        outcome.Delivered = posted;
-        outcome.Notes.Add($"目标子窗口 {ClassName(target)} 0x{target.ToInt64():X}");
-
-        if (posted)
-        {
-            outcome.Ok = true;          // 是否有用由上层验证决定
-            outcome.DispatchMs = sw.Elapsed.TotalMilliseconds;
-            return outcome;
-        }
-
+        // 显式授权全局输入时，直接用 SendInput，不再先试窗口消息。
+        // 原因：PostMessage 只要把消息塞进队列就返回 true，但 Chromium/CEF、WPF、
+        // 自绘界面普遍不消费 WM_LBUTTONDOWN（实测企业微信点击后页面毫无反应）。
+        // 旧顺序是「posted 就 return」，导致 --allow-global 永远走不到——
+        // 参数形同虚设，用户明确授权了却还是点不动。
         if (allowGlobal)
         {
             var ok = GlobalInput.Click(screenX, screenY);
@@ -56,6 +49,19 @@ public static class TargetedInput
             outcome.Ok = ok;
             outcome.FailureReason = ok ? "" : "SendInput 失败";
             outcome.Notes.Add("已按 --allow-global 授权改用全局输入注入（会移动真实鼠标）");
+            outcome.Notes.Add($"目标子窗口 {ClassName(target)} 0x{target.ToInt64():X}");
+            outcome.DispatchMs = sw.Elapsed.TotalMilliseconds;
+            return outcome;
+        }
+
+        var posted = PostClick(target, screenX, screenY, out var why);
+        outcome.Method = MethodWmMessage;
+        outcome.Delivered = posted;
+        outcome.Notes.Add($"目标子窗口 {ClassName(target)} 0x{target.ToInt64():X}");
+
+        if (posted)
+        {
+            outcome.Ok = true;          // 是否有用由上层验证决定
             outcome.DispatchMs = sw.Elapsed.TotalMilliseconds;
             return outcome;
         }
@@ -139,6 +145,30 @@ public static class TargetedInput
             }
 
             var target = TargetHwndFor(windowHwnd, selector);
+
+            // 显式授权时优先用全局 Unicode 注入：CEF/Qt 这类自绘界面既不实现 UIA ValuePattern，
+            // 也普遍不消费 WM_CHAR，只有 SendInput 能真正把字打进去。
+            // 注意：这要求调用方已经点进目标输入框（焦点），本方法不负责聚焦。
+            if (allowGlobal)
+            {
+                var typed = GlobalInput.TypeText(text);
+                return new ActionOutcome
+                {
+                    Ok = typed,
+                    Delivered = typed,
+                    Method = MethodGlobal,
+                    UiaError = fail,
+                    Escalated = true,
+                    FailureReason = typed ? "" : "SendInput 文本注入失败",
+                    DispatchMs = sw.Elapsed.TotalMilliseconds,
+                    Notes =
+                    {
+                        $"UIA ValuePattern 不可用（{fail}）→ 已按 --allow-global 用 SendInput 注入文本",
+                        "前提：目标控件已获得焦点；会占用用户键盘输入流",
+                    },
+                };
+            }
+
             var posted = PostChars(target, text, out var why);
             return new ActionOutcome
             {

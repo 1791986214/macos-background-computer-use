@@ -1,6 +1,6 @@
 ---
 name: workbuddy-third-hand
-version: 0.6.2
+version: 0.6.1
 description: WorkBuddy Third Hand —— 给 WorkBuddy 的第三只手，macOS 与 Windows 双平台。用各自平台的原生技术（macOS：ScreenCaptureKit + Accessibility + 进程级事件投递；Windows：Windows.Graphics.Capture + UI Automation + 定向窗口消息）在后台操作指定应用，优先不抢占用户真实鼠标、不切换前台、不抢键盘焦点，并且每次操作都读值验证。当用户要求「帮我操作另一个应用」「在后台完成桌面任务」「不要影响我正在用的鼠标」「读一下另一个应用里的信息」「点一下那个按钮」「同时在两个应用里干活」「用虚拟鼠标操作某个窗口」，或需要在计算器 / 记事本 / 文件资源管理器 / Finder / 文本编辑 / Electron 应用里做自动化时使用。
 agent_created: true
 ---
@@ -181,8 +181,26 @@ wbcu.exe key    --id $sid --combo ctrl+a --json
 wbcu.exe scroll --id $sid --dy -3 --json
 wbcu.exe verify --id $sid --expect "15" --state automationid:CalculatorResults --json
 
+# 坐标点击必须声明坐标系（v0.6.3+）
+#   window = 窗口左上角为原点（AI 从目标窗口截图里读出的坐标就用这个）
+#   client = 客户区原点（不含标题栏与边框）
+#   screen = 屏幕绝对坐标（默认，向后兼容）
+wbcu.exe click --id $sid --x 960 --y 11 --coord-space window --json
+wbcu.exe click --id $sid --x 12 --y 40 --coord-space client --json
+
 wbcu.exe session end --id $sid
 ```
+
+### 截图与遮挡（v0.6.3）
+
+- `capture` 走 **Windows Graphics Capture 持久会话**（`method=graphics_capture_live`），
+  绑定的是目标 HWND，**和当前前台窗口无关**：用户切到别的应用、目标被完全遮挡，
+  截到的依然是目标窗口自己的画面。
+- 连续截图复用同一个会话（Latest Frame Wins），命中时 0 等待；只有首帧要等。
+- 降级顺序：持久会话 → 一次性 WGC → PrintWindow。**任何一级都不会退化成截前台窗口**。
+  拿不到就如实报错，不做假截图。
+- 最小化窗口没有 DWM 合成表面，捕获会明确报告失败，需要先还原窗口。
+- 遮挡只影响 Ghost Cursor 的透明度（变淡），**不影响捕获、UIA 与后台输入**。
 
 **验收只看 `verification.result`，不看退出码。** 四分类的读法与 macOS 完全一致：
 

@@ -101,6 +101,39 @@ public static class GlobalInput
     private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
 
     private const uint KEYEVENTF_KEYUP = 0x0002;
+    private const uint KEYEVENTF_UNICODE = 0x0004;
+
+    /// <summary>
+    /// 用 SendInput 逐字符注入 Unicode 文本。走 KEYEVENTF_UNICODE，不经过输入法，
+    /// 因此中文可以直接送达（不需要切换 IME）。
+    ///
+    /// 前提：目标控件已经有键盘焦点。调用方必须先点进那个输入框——本方法不做聚焦，
+    /// 也不会替调用方去点，避免"以为在输入框里打字、实际敲到了别的窗口"。
+    /// 会占用用户的键盘输入流，只能在显式授权（--allow-global）下使用。
+    /// </summary>
+    public static bool TypeText(string text)
+    {
+        foreach (var ch in text)
+        {
+            var inputs = new INPUT[2];
+
+            inputs[0].type = INPUT_KEYBOARD;
+            inputs[0].U.ki = new KEYBDINPUT
+            {
+                wVk = 0, wScan = ch, dwFlags = KEYEVENTF_UNICODE, time = 0, dwExtraInfo = IntPtr.Zero,
+            };
+
+            inputs[1].type = INPUT_KEYBOARD;
+            inputs[1].U.ki = new KEYBDINPUT
+            {
+                wVk = 0, wScan = ch, dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time = 0, dwExtraInfo = IntPtr.Zero,
+            };
+
+            if (SendInput(2, inputs, Marshal.SizeOf<INPUT>()) != 2) return false;
+            Thread.Sleep(8);
+        }
+        return true;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MOUSEINPUT

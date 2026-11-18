@@ -492,10 +492,39 @@ public static class Commands
             if (x == null || y == null)
             {
                 return ctx.Fail(new CliError(ErrorCodes.BadArgs,
-                    "需要定位方式：--name/--automationid/--path/--index，或 --x --y（屏幕坐标）"));
+                    "需要定位方式：--name/--automationid/--path/--index，或 --x --y（配合 --coord-space 指定坐标系）"));
             }
-            gx = x!.Value;
-            gy = y!.Value;
+
+            // 坐标空间。默认 screen 保持向后兼容。
+            // 以前只有屏幕坐标，AI 从目标窗口截图里读出的坐标必须自己加窗口原点，
+            // 一旦算错就点到屏幕左上角，而命令照样返回 delivered=true —— 极难排查。
+            var space = (ctx.Args.Str("coord-space") ?? "screen").Trim().ToLowerInvariant();
+            switch (space)
+            {
+                case "screen":
+                    gx = x!.Value;
+                    gy = y!.Value;
+                    break;
+                case "window":
+                    gx = win.Frame.Left + x!.Value;
+                    gy = win.Frame.Top + y!.Value;
+                    break;
+                case "client":
+                {
+                    var pt = new Native.POINT { X = x!.Value, Y = y!.Value };
+                    if (!Native.ClientToScreen(win.Hwnd, ref pt))
+                    {
+                        return ctx.Fail(new CliError(ErrorCodes.Internal, "ClientToScreen 失败"));
+                    }
+                    gx = pt.X;
+                    gy = pt.Y;
+                    break;
+                }
+                default:
+                    return ctx.Fail(new CliError(ErrorCodes.BadArgs,
+                        $"--coord-space 只接受 window / client / screen，收到：{space}"));
+            }
+
             outcome = TargetedInput.ClickAt(win.Hwnd, gx, gy, allowGlobal);
         }
 

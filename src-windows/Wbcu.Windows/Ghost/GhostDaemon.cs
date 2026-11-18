@@ -36,6 +36,14 @@ public sealed class GhostDaemon
     private readonly ConcurrentQueue<string> _ops = new();
     private readonly GhostState _state = new();
 
+    /// <summary>
+    /// 「需要重绘」标记。60fps 定时器不该在画面静止时也满速重绘：
+    /// 252px 位图一帧约 5ms，常驻重绘等于白吃 30% 单核。
+    /// 只有位置/透明度/可见性/动画状态变化时才置脏。
+    /// </summary>
+    private bool _dirty = true;
+    private bool _wasAnimating;
+
     private LayeredOverlay? _overlay;
 
     private GhostDaemon(string pipeName, string hwndHex, string sessionId)
@@ -163,17 +171,20 @@ public sealed class GhostDaemon
                     _state.RelX = GetDouble(root, "x", _state.RelX);
                     _state.RelY = GetDouble(root, "y", _state.RelY);
                     _state.Visible = true;
+                    _dirty = true;
                     Render();
                     break;
 
                 case "click":
                     _state.ClickStart = Environment.TickCount64;
                     _state.Visible = true;
+                    _dirty = true;
                     Render();
                     break;
 
                 case "hide":
                     _state.Visible = false;
+                    _dirty = false;
                     _overlay?.Hide();
                     break;
 
@@ -182,6 +193,7 @@ public sealed class GhostDaemon
                     {
                         WindowEnumerator.TryParseHwnd(hex, out var nh);
                         _targetHwnd = nh;
+                        _dirty = true;
                     }
                     break;
 
@@ -208,12 +220,21 @@ public sealed class GhostDaemon
         SyncDpi();
         DrainOps();
 
-        if (!_state.Visible) return;
+        if (!_state.Visible) { _dirty = false; return; }
 
         // 点击动画：GhostTokens.ClickAnimationMs（120ms）内显示扩散环
         var clicking = _state.ClickStart > 0
                        && Environment.TickCount64 - _state.ClickStart < GhostTokens.ClickAnimationMs;
-        Render(clicking ? (_state.ClickStart) : 0);
+
+        // 动画刚结束的那一帧要补画一次，否则扩散环会残留在画面上
+        if (_wasAnimating && !clicking) _dirty = true;
+        _wasAnimating = clicking;
+
+        // 静止且无动画时不重绘：这是「覆盖层常驻不吃 CPU」的关键
+        if (!_dirty && !clicking) return;
+        _dirty = false;
+
+        Render(clicking ? _state.ClickStart : 0);
     }
 
     /// <summary>
@@ -229,8 +250,9 @@ public sealed class GhostDaemon
         if (Math.Abs(s - _state.Scale) < 0.001) return;
 
         _state.Scale = s;
-        // 位图与窗口尺寸都由 SizePx 推导；下一帧 SetPixels/Present 会自动按新尺寸重建。
-        Render();
+        // 只置脏，不在这里直接渲染：
+        // 旧写法在隐藏状态下也会 Present，等于把用户刚隐藏的覆盖层又画出来。
+        _dirty = true;
     }
 
     private void Render(long clickStart = 0)

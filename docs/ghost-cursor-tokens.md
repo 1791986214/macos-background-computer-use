@@ -22,12 +22,14 @@ Windows 与 macOS 用不同的原生技术绘制虚拟光标（Windows：`WS_EX_
 | `CursorGlyphWidthDip` | 20 | 箭头图形宽 |
 | `CursorGlyphHeightDip` | 24 | 箭头图形高 |
 | `TipXDip` / `TipYDip` | 24 / 24 | 热点在窗口内的位置；窗口原点 = 目标点 − 该偏移 |
-| `StrokeWidthDip` | 1.5 | 描边线宽 |
-| `FillAlpha` | 0.92 | 箭头填充不透明度（近白，透出背景） |
-| `StrokeAlpha` | 0.55 | 描边不透明度（深灰蓝，非纯黑） |
+| `StrokeWidthDip` | 1.75 | 描边线宽（1.5 在浅色底上偏细，实测提亮到 1.75 才读得清） |
+| `FillAlpha` | 0.98 | 箭头填充不透明度（近白实心；0.92 在浅色底上会糊成空心） |
+| `StrokeAlpha` | 0.88 | 描边不透明度（深灰蓝，非纯黑） |
 | `GlowDiameterDip` | 56 | 光晕直径 |
 | `GlowOpacity` | 0.22 | 光晕峰值不透明度 |
 | `ClickAnimationMs` | 120 | 点击反馈环时长 |
+| 反馈环半径 | 10 → 26 DIP | 随 progress 扩散；**圆心是热点，不是位图中心** |
+| 反馈环配色 | 深色外圈 + 亮白内圈 | 浅底/深底各靠一层可见 |
 | `TargetFps` | 60 | 帧率（`TickMs = 1000 / TargetFps = 16`） |
 | `CursorTrail` | false | 拖尾关闭——在窗口内容上会形成重影观感 |
 | `FillRGB` | 255,255,255 | 箭头填充 |

@@ -152,8 +152,15 @@ public static class CursorRaster
     }
 
     /// <summary>
-    /// 点击反馈环：progress 0→1 表示扩散过程（GhostTokens.ClickAnimationMs 内走完）。
-    /// 以箭头重心为圆心，浅冷白细环，快速淡出。与光标同尺寸，便于直接叠加。
+    /// 点击反馈环：progress 0→1 表示扩散过程。
+    ///
+    /// 三个约束（都是踩出来的）：
+    ///   1) **圆心是热点（箭头尖端），不是位图中心。** 旧版以位图中心画环，
+    ///      126px 位图里环心比尖端偏右下约 39px，看起来像「点在了另一个地方」。
+    ///   2) **用中亮度蓝，而不是白或黑。** 白色环在浅色桌面上消失，深色环在深色桌面上消失；
+    ///      试过「深色外圈 + 亮白内圈」的双层方案，但环只有 1.6px 宽，深色层被压到
+    ///      alpha≈0.09，等于没画。中亮度蓝（100,150,255）在两种背景上都有对比度。
+    ///   3) **半径按 DIP 收敛**（10→26 DIP），不超过光晕半径，避免糊住箭头本体。
     /// </summary>
     public static byte[] RenderClickRing(int sizePx, double progress)
     {
@@ -162,27 +169,22 @@ public static class CursorRaster
         var buf = new byte[sizePx * sizePx * 4];
 
         var scale = sizePx / GhostTokens.OverlayWidthDip;
-        var glyphW = GhostTokens.CursorGlyphWidthDip * scale;
-        var glyphH = GhostTokens.CursorGlyphHeightDip * scale;
-        var tipX = GhostTokens.TipXDip * scale;
-        var tipY = GhostTokens.TipYDip * scale;
+        var cx = GhostTokens.TipXDip * scale;
+        var cy = GhostTokens.TipYDip * scale;
 
-        var cx = tipX + glyphW * GhostTokens.GlowCenterX;
-        var cy = tipY + glyphH * GhostTokens.GlowCenterY;
-
-        var glowR = GhostTokens.GlowDiameterDip * scale / 2.0;
-        var radius = glowR * (0.20 + 0.80 * progress);
-        var thickness = Math.Max(1.0, GhostTokens.StrokeWidthDip * scale);
+        var radius = (10 + 16 * progress) * scale;
+        var thickness = Math.Max(1.2, 1.5 * scale);
         var fade = 1.0 - progress;
 
-        var minX = Math.Max(0, (int)(cx - radius - thickness - 2));
-        var maxX = Math.Min(sizePx - 1, (int)(cx + radius + thickness + 2));
-        var minY = Math.Max(0, (int)(cy - radius - thickness - 2));
-        var maxY = Math.Min(sizePx - 1, (int)(cy + radius + thickness + 2));
+        var rMax = radius + thickness + 1;
+        var x0 = Math.Max(0, (int)Math.Floor(cx - rMax));
+        var x1 = Math.Min(sizePx - 1, (int)Math.Ceiling(cx + rMax));
+        var y0 = Math.Max(0, (int)Math.Floor(cy - rMax));
+        var y1 = Math.Min(sizePx - 1, (int)Math.Ceiling(cy + rMax));
 
-        for (var py = minY; py <= maxY; py++)
+        for (var py = y0; py <= y1; py++)
         {
-            for (var px = minX; px <= maxX; px++)
+            for (var px = x0; px <= x1; px++)
             {
                 var dx = px + 0.5 - cx;
                 var dy = py + 0.5 - cy;
@@ -190,14 +192,14 @@ public static class CursorRaster
                 var band = Math.Abs(d - radius);
                 if (band > thickness) continue;
 
-                var k = (1 - band / thickness) * fade * 0.55;
-                var a = Math.Clamp(k, 0, 1);
+                var k = (1 - band / thickness) * fade * 0.85;
+                if (k <= 0.01) continue;
+
                 var i = (py * sizePx + px) * 4;
-                // 偏冷白，与光晕同色系
-                buf[i + 0] = (byte)(235 * a);
-                buf[i + 1] = (byte)(240 * a);
-                buf[i + 2] = (byte)(255 * a);
-                buf[i + 3] = (byte)(a * 255);
+                buf[i + 0] = (byte)Math.Clamp(255 * k, 0, 255); // B
+                buf[i + 1] = (byte)Math.Clamp(150 * k, 0, 255); // G
+                buf[i + 2] = (byte)Math.Clamp(100 * k, 0, 255); // R
+                buf[i + 3] = (byte)Math.Clamp(k * 255.0, 0, 255);
             }
         }
 

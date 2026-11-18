@@ -13,7 +13,7 @@
 # to be run by a human on an interactive desktop (see the printed next steps).
 
 param(
-    [string]$Url = 'https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/wbcu-windows-win-x64-0.6.1.zip',
+    [string]$Url = 'https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/wbcu-windows-win-x64-0.6.2.zip',
     [string]$Dest = (Join-Path $env:TEMP 'wbcu-setup'),
     [string]$SkillDir,
     [switch]$AddToPath,

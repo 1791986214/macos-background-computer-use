@@ -11,16 +11,16 @@ WorkBuddy 的跨平台桌面操作技能与执行引擎——让 WorkBuddy 能�
 > npm（已装 Node 18+，Windows / macOS 通用）：
 >
 > ```bash
-> npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/workbuddy-third-hand-0.6.1.tgz
+> npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
 > ```
 >
 > PowerShell（没装 Node 时，Windows）：
 >
 > ```powershell
-> powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/install-windows.ps1 | iex"
+> powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/install-windows.ps1 | iex"
 > ```
 >
-> 预发布包 `v0.6.1-rc1`：编译 / 单测 / 契约已验证，**真机 GUI 验收未做**。
+> 预发布包 `v0.6.2-rc1`：编译 / 单测 / 契约已验证，**真机 GUI 验收未做**。
 > 详见 [`docs/windows-installation.md`](docs/windows-installation.md)。
 
 **macOS 与 Windows 双平台，一个技能，两个原生引擎**（共享同一份跨平台契约）：

@@ -73,6 +73,48 @@ public class CursorRasterTests
     }
 
     [Fact]
+    public void Click_ring_is_centered_on_the_tip_not_the_bitmap_center()
+    {
+        const int size = 126;
+        const double progress = 0.3;
+        var ring = CursorRaster.RenderClickRing(size, progress);
+
+        // 热点在 (24,24)；环半径 = (10 + 16*progress) DIP
+        var radius = 10 + 16 * progress;
+        var cx = (int)Math.Round(24 + radius);
+        var onRing = (24 * size + cx) * 4 + 3;
+        Assert.True(ring[onRing] > 20, "环必须出现在热点周围，而不是位图中心");
+
+        // 位图中心 (63,63) 距热点约 55px，远超最大环半径，必须完全为空
+        var atCenter = (63 * size + 63) * 4 + 3;
+        Assert.Equal(0, ring[atCenter]);
+    }
+
+    [Fact]
+    public void Click_ring_uses_mid_luminance_blue()
+    {
+        // 白环在浅色桌面消失、黑环在深色桌面消失；中亮度蓝对两者都有对比度。
+        var ring = CursorRaster.RenderClickRing(126, 0.5);
+        var found = 0;
+
+        for (var i = 0; i < ring.Length; i += 4)
+        {
+            var a = ring[i + 3];
+            if (a < 30) continue;
+            var b = ring[i + 0] * 255.0 / a;
+            var g = ring[i + 1] * 255.0 / a;
+            var r = ring[i + 2] * 255.0 / a;
+            var lum = 0.299 * r + 0.587 * g + 0.114 * b;
+
+            Assert.True(b > r + 40, "反馈环应偏蓝（B 明显大于 R）");
+            Assert.InRange(lum, 60, 220);   // 既不是纯白也不是纯黑
+            found++;
+        }
+
+        Assert.True(found >= 8, $"反馈环像素太少（{found}），可能没画出来");
+    }
+
+    [Fact]
     public void Click_ring_center_is_empty()
     {
         const int size = 64;

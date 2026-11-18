@@ -39,13 +39,13 @@ public static class GhostTokens
 
     // ── 描边与填充 ──────────────────────────────────────────────
     /// <summary>描边线宽（DIP）。细到能压住浅色背景，又不至于变成黑边框。</summary>
-    public const double StrokeWidthDip = 1.5;
+    public const double StrokeWidthDip = 1.75;
 
     /// <summary>填充不透明度：近白半透明，透出一点背景，不糊住内容。</summary>
-    public const double FillAlpha = 0.92;
+    public const double FillAlpha = 0.98;
 
     /// <summary>描边不透明度：深灰蓝，克制，不用纯黑。</summary>
-    public const double StrokeAlpha = 0.55;
+    public const double StrokeAlpha = 0.88;
 
     // ── 光晕 ────────────────────────────────────────────────────
     /// <summary>光晕直径（DIP）。远小于窗口边长，留出柔和衰减空间。</summary>

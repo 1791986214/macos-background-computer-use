@@ -21,7 +21,7 @@
 | `foreground_fallback` | `unsupported` | `SendInput`（仅 `--allow-global`） | 默认不启用：会移动真实鼠标、进入用户前台窗口 |
 | `window_capture` | `partial` | Graphics Capture / PrintWindow | 两条后端都实现；最小化与 DRM 内容取不到 |
 | `minimized_window_capture` | `unsupported` | — | 最小化窗口无 DWM 合成表面 |
-| `ghost_cursor` | `supported`（代码）/ `not_tested`（观感） | `WS_EX_LAYERED` + `UpdateLayeredWindow` | 光栅算法有 9 个单测；预览图 `docs/images/ghost-cursor-on-light.png` / `-on-dark.png` / `ghost-click-ring.png`；实际 DWM 合成效果待真机看 |
+| `ghost_cursor` | `supported`（代码）/ `not_tested`（观感） | `WS_EX_LAYERED` + `UpdateLayeredWindow` | v0.6.2 起视觉口径由 `GhostTokens` 定义（窗口 126 / 箭头 20×24 / 光晕 56 DIP，三者解耦），见 `docs/ghost-cursor-tokens.md`；光栅与反馈环共 11 个单测；预览图 `docs/images/ghost-cursor-on-light.png` / `-on-dark.png` / `ghost-click-ring.png`；静态时不重绘（脏标记），实际 DWM 合成观感仍待真机看 |
 | `session_reuse` | `supported` | 会话 JSON + HWND/PID 校验 | 失效会报 `session_stale`，不拿死句柄硬点 |
 | `result_verification` | `supported` | UIA 状态读数 + 树指纹 | 四分类与 macOS 同一套判据，65 个单测覆盖 |
 | `experience_memory` | `supported` | 只存语义选择器 | 坐标与 HWND 不进长期库 |

@@ -6,7 +6,7 @@
 ### 0.1 npm（已装 Node 18+ 时最省事）
 
 ```powershell
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/workbuddy-third-hand-0.6.1.tgz
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
 wbcu doctor
 ```
 
@@ -17,8 +17,8 @@ npm 包本身只有 7 KB：postinstall 会按当前平台下载对应的原生�
 离线/内网：
 
 ```powershell
-$env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.1.zip"
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/workbuddy-third-hand-0.6.1.tgz
+$env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.2.zip"
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
 ```
 
 > 本包尚未发布到 npm registry（`npm i -g workbuddy-third-hand` 暂时不可用），
@@ -29,7 +29,7 @@ npm i -g https://github.com/1791986214/macos-background-computer-use/releases/do
 在 Windows 上打开 **PowerShell**（普通用户即可，不需要管理员）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/install-windows.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/install-windows.ps1 | iex"
 ```
 
 它会依次做：下载发布包 → 校验大小并打印 SHA256 → 解压到 `%TEMP%\wbcu-setup`
@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/m
 不想执行远程脚本时，手动两步等价：
 
 ```powershell
-$u = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/wbcu-windows-win-x64-0.6.1.zip"
+$u = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/wbcu-windows-win-x64-0.6.2.zip"
 Invoke-WebRequest $u -OutFile wbcu.zip -UseBasicParsing
 Expand-Archive wbcu.zip -DestinationPath wbcu -Force
 powershell -ExecutionPolicy Bypass -File wbcu\install.ps1 -Source wbcu
@@ -47,7 +47,7 @@ powershell -ExecutionPolicy Bypass -File wbcu\install.ps1 -Source wbcu
 当前包 SHA256：`3746e12fe68b5985a263ca7462847fd229fc5d01a04b948c7409bb98d6c37e1e`
 （`Get-FileHash wbcu.zip -Algorithm SHA256` 自行核对）。
 
-> ⚠️ `v0.6.1-rc1` 是**预发布**：编译、单测、契约一致性已验证，**真机 GUI 验收未做**。
+> ⚠️ `v0.6.2-rc1` 是**预发布**：编译、单测、契约一致性已验证，**真机 GUI 验收未做**。
 > 装完先跑第 4 节自检；要宣称「能用」必须跑第 5 节。
 
 ## 1. 环境要求
@@ -78,7 +78,7 @@ powershell -ExecutionPolicy Bypass -File src-windows\build.ps1
 
 ```bash
 ./scripts/pack-windows.sh win-x64
-# → dist/wbcu-windows-win-x64-0.6.1.zip
+# → dist/wbcu-windows-win-x64-0.6.2.zip
 ```
 
 实测（2026-11-16，macOS 26.6 arm64，SDK 8.0.428）：
@@ -181,8 +181,8 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1 -PurgeState  # 连经验�
 - **0.6.0 有个坑：不带 `--no-ghost` 会挂起**（守护进程继承 stdout）。0.6.1 已修，不再需要该参数。
 - **GitHub Release 直连不通时的正确做法**：镜像取包 + `WBCU_LOCAL_ZIP` 注入，sha256 不被跳过。
   ```powershell
-  $env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.1.zip"
-  npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/workbuddy-third-hand-0.6.1.tgz
+  $env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.2.zip"
+  npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
   ```
 - **运行时依赖分两层**：引擎只要 `Microsoft.NETCore.App` 8；`testapps\`（WPF 靶子 + 验收套件）
   还需要 `Microsoft.WindowsDesktop.App` 8。只想跑引擎可以不装 Desktop。

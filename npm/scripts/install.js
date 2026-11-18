@@ -66,13 +66,19 @@ async function main() {
         hash = sha256File(zipPath);
         log(`using local archive: ${localZip}`);
     } else {
-        const url = `${RELEASE_BASE}/${a.file}`;
+        // WBCU_DOWNLOAD_BASE 可指向镜像（国内网络的常规做法），只替换前缀
+        const base = process.env.WBCU_DOWNLOAD_BASE || RELEASE_BASE;
+        const url = `${base}/${a.file}`;
         log(`downloading ${url}`);
         try {
             hash = await download(url, zipPath);
         } catch (e) {
             fail(`download failed: ${e.message}`,
-                `offline? download it manually and retry with WBCU_LOCAL_ZIP=<path> to: ${url}`);
+                `offline / proxied? three ways:\n`
+                + `  1) mirror:  set WBCU_DOWNLOAD_BASE=<mirror that serves the same release>\n`
+                + `  2) local:   download this file and set WBCU_LOCAL_ZIP=<path to zip>\n`
+                + `              ${url}\n`
+                + `  3) manual:  curl -fsSL -o wbcu.zip "${url}" then WBCU_LOCAL_ZIP=wbcu.zip`);
         }
     }
 

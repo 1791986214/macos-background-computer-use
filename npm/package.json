@@ -1,6 +1,6 @@
 {
   "name": "workbuddy-third-hand",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "WorkBuddy Third Hand — cross-platform background computer use (macOS + Windows). Installs the native engine and the WorkBuddy skill.",
   "keywords": [
     "workbuddy",

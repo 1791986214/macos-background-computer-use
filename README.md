@@ -11,7 +11,7 @@ WorkBuddy 的跨平台桌面操作技能与执行引擎——让 WorkBuddy 能�
 > npm（已装 Node 18+，Windows / macOS 通用）：
 >
 > ```bash
-> npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
+> npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.3.tgz
 > ```
 >
 > PowerShell（没装 Node 时，Windows）：

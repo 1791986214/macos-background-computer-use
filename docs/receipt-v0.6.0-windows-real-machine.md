@@ -52,7 +52,7 @@
 
 ```powershell
 wbcu session end --all                      # 清掉 0.6.0 残留会话与覆盖层
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/workbuddy-third-hand-0.6.1.tgz
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.1-rc1/workbuddy-third-hand-0.6.3.tgz
 wbcu version                                # 期望 0.6.1
 
 # 1) 先确认不带 --no-ghost 也不挂起（本次修的核心）

@@ -1,5 +1,9 @@
 # workbuddy-third-hand (npm 包)
 
+> **版本说明**：npm 包版本与引擎版本分开。本包 `0.6.3` 内含引擎 `0.6.2`
+> （`0.6.3` 只修了下载器：Node 的 `https` 不读 `HTTPS_PROXY`，加 curl 兜底 + 镜像支持）。
+> 用 `wbcu version` 看引擎版本，`wbcu --npm-info` 同时看两者。
+
 WorkBuddy Third Hand 的 npm 分发通道。装上之后你得到的是 `wbcu` 命令
 （Windows 上是 `wbcu.exe` 原生引擎），以及一份装到 WorkBuddy 技能目录里的 `SKILL.md`。
 
@@ -35,6 +39,7 @@ wbcu doctor
 |---|---|
 | `WBCU_PLATFORM=win32-x64` | 覆盖平台判定（仅用于调试/交叉验证） |
 | `WBCU_LOCAL_ZIP=<path>` | 用本地 zip 代替下载（内网/代理环境） |
+| `WBCU_DOWNLOAD_BASE=<url>` | 把发布包下载前缀换成镜像（代理环境推荐） |
 | `WBCU_SKIP_DOWNLOAD=1` | 只装壳，二进制自己放 |
 | `WBCU_SKIP_SKILL=1` | 不往 WorkBuddy 技能目录写 `SKILL.md` |
 

@@ -6,7 +6,7 @@
 ### 0.1 npm（已装 Node 18+ 时最省事）
 
 ```powershell
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.3.tgz
 wbcu doctor
 ```
 
@@ -18,7 +18,7 @@ npm 包本身只有 7 KB：postinstall 会按当前平台下载对应的原生�
 
 ```powershell
 $env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.2.zip"
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.3.tgz
 ```
 
 > 本包尚未发布到 npm registry（`npm i -g workbuddy-third-hand` 暂时不可用），
@@ -182,7 +182,7 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1 -PurgeState  # 连经验�
 - **GitHub Release 直连不通时的正确做法**：镜像取包 + `WBCU_LOCAL_ZIP` 注入，sha256 不被跳过。
   ```powershell
   $env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.2.zip"
-  npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.2.tgz
+  npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.3.tgz
   ```
 - **运行时依赖分两层**：引擎只要 `Microsoft.NETCore.App` 8；`testapps\`（WPF 靶子 + 验收套件）
   还需要 `Microsoft.WindowsDesktop.App` 8。只想跑引擎可以不装 Desktop。

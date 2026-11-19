@@ -1,6 +1,6 @@
 ---
 name: workbuddy-third-hand
-version: 0.6.1
+version: 0.6.5
 description: WorkBuddy Third Hand —— 给 WorkBuddy 的第三只手，macOS 与 Windows 双平台。用各自平台的原生技术（macOS：ScreenCaptureKit + Accessibility + 进程级事件投递；Windows：Windows.Graphics.Capture + UI Automation + 定向窗口消息）在后台操作指定应用，优先不抢占用户真实鼠标、不切换前台、不抢键盘焦点，并且每次操作都读值验证。当用户要求「帮我操作另一个应用」「在后台完成桌面任务」「不要影响我正在用的鼠标」「读一下另一个应用里的信息」「点一下那个按钮」「同时在两个应用里干活」「用虚拟鼠标操作某个窗口」，或需要在计算器 / 记事本 / 文件资源管理器 / Finder / 文本编辑 / Electron 应用里做自动化时使用。
 agent_created: true
 ---

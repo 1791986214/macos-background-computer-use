@@ -79,7 +79,7 @@ public static class Program
             outPath = Path.Combine(dir, $"shot-{DateTime.Now:HHmmss}-{hwndArg!.Replace("0x", "")}.png");
         }
 
-        var reply = SendRaw(new { op = "capture", hwnd = hwndArg, @out = outPath }, 2000);
+        var reply = SendRaw(new { op = "capture", hwnd = hwndArg, @out = outPath }, 120);
         if (reply == null)
         {
             return Error("worker_unreachable", "Worker 未运行或管道不可达", exit: 2);
@@ -97,7 +97,7 @@ public static class Program
     private static int Send(object payload, Dictionary<string, string> opt)
     {
         var t0 = Stopwatch.GetTimestamp();
-        var reply = SendRaw(payload, 1200);
+        var reply = SendRaw(payload, 120);
         if (reply == null) return Error("worker_unreachable", "Worker 未运行或管道不可达", exit: 2);
 
         using (reply)

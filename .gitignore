@@ -42,3 +42,6 @@ dist/
 npm/vendor/
 npm/*.tgz
 npm/node_modules/
+
+# 本地预览（不入库）
+readme-preview.html

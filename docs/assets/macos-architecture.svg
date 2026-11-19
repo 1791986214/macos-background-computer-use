@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1120" height="916" viewBox="0 0 1120 916" role="img" aria-labelledby="title desc">
+  <title id="title">Third Hand — macOS Architecture</title>
+  <desc id="desc">WorkBuddy Agent invokes the wbcu Swift CLI directly; the engine uses Accessibility, ScreenCaptureKit, targeted CGEvent delivery, an independent LSUIElement ghost overlay, session management, experience memory and a verifier. On macOS there is no lightweight client or persistent worker split.</desc>
+  <defs>
+    <style>
+      .bg{fill:#ffffff;stroke:#e4e4e7}.panel{fill:#ffffff;stroke:#e4e4e7}.tile{fill:#f4f4f5}.main{fill:#18181b}.muted{fill:#626269}.accent{fill:#13743d}.line{fill:none;stroke:#27272a;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.arrow{stroke:#71717a;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none}
+      text{font-family:'Noto Sans CJK SC','Microsoft YaHei','PingFang SC','Segoe UI',sans-serif;text-anchor:middle} .head{font-weight:650;font-size:23px}.sub{font-size:17px}.small{font-size:15px}.worker{font-size:28px;font-weight:700}.label{font-size:21px;font-weight:650}.tile-sub{font-size:17px}
+      .pill{font-size:13px;font-weight:640;text-anchor:middle}
+      .pill-ok{fill:#e8f4ec}.pill-ok-t{fill:#13743d}
+      .pill-exp{fill:#f6efdf}.pill-exp-t{fill:#98620a}
+      .pill-plan{fill:#eeeef0}.pill-plan-t{fill:#626269}
+      .dot-ok{fill:#13743d}.dot-exp{fill:#b8860b}.dot-plan{fill:#a1a1aa}
+      .foot{font-size:15px}.left{text-anchor:start}
+      @media (prefers-color-scheme:dark){.bg,.panel{fill:#0d1117;stroke:#30363d}.tile{fill:#161b22}.main{fill:#f0f6fc}.muted{fill:#a5adb7}.accent{fill:#56d364}.line{stroke:#e6edf3}.arrow{stroke:#8b949e}
+        .pill-ok{fill:#122a1c}.pill-ok-t{fill:#56d364}
+        .pill-exp{fill:#2a2314}.pill-exp-t{fill:#d9a84a}
+        .pill-plan{fill:#1c2128}.pill-plan-t{fill:#a5adb7}
+        .dot-ok{fill:#56d364}.dot-exp{fill:#d9a84a}.dot-plan{fill:#6e7681}}
+    </style>
+    <g id="eye" class="line"><path d="M-9-5v-2q0-2 2-2h2M5-9h2q2 0 2 2v2M9 5v2q0 2-2 2H5M-5 9h-2q-2 0-2-2V5"/><path d="M-7 0Q0-8 7 0Q0 8-7 0Z"/><circle r="2.1"/></g>
+    <g id="click" class="line"><path d="M-4-5l11 5-5 2-2 5zM-8-6l-3-2M-3-10v-3M4-8l2-3M-9 1h-3"/></g>
+    <g id="db" class="line"><ellipse cy="-6" rx="7" ry="3"/><path d="M-7-6V6c0 4 14 4 14 0V-6M-7 0c0 4 14 4 14 0"/></g>
+    <g id="refresh" class="line"><path d="M-8-1a8 8 0 0 1 13-6l3 3M8-8v4H4M8 1a8 8 0 0 1-13 6l-3-3M-8 8V4h4"/></g>
+    <g id="cursor" class="line"><path d="M-7-9q-2-1-1 2l4 15q1 2 3 0l3-6 6-3q2-1 0-3z"/></g>
+    <g id="check" class="line"><circle r="9"/><path d="M-4 0l3 3 5-6"/></g>
+    <g id="down" class="arrow"><path d="M0-7V7M-5 2l5 5 5-5"/></g>
+  </defs>
+  <rect class="bg" x="1" y="1" width="1118" height="914" rx="22"/>
+
+  <rect class="tile" x="24" y="24" width="1072" height="94" rx="14"/>
+  <text class="main head" x="560" y="62">WorkBuddy Agent</text>
+  <text class="muted sub" x="560" y="91">任务规划与工具调用</text>
+  <use xlink:href="#down" x="560" y="141"/>
+
+  <!-- wbcu CLI — 已实现 -->
+  <rect class="panel" x="24" y="165" width="1072" height="122" rx="14"/>
+  <text class="main head" x="560" y="201">wbcu · Swift CLI</text>
+  <rect class="pill pill-ok" x="946" y="181" width="118" height="28" rx="14"/>
+  <text class="pill pill-ok-t" x="1005" y="200">已实现</text>
+  <text class="muted sub" x="560" y="231">单次调用 · 会话内复用同一引擎</text>
+  <text class="accent small" x="560" y="260">macOS 不分轻量客户端与常驻进程：引擎随命令启动，覆盖层独立常驻</text>
+
+  <use xlink:href="#down" x="499" y="316"/>
+  <text class="muted sub" x="578" y="322">stdin / JSON</text>
+  <text class="muted foot" x="560" y="338">覆盖层通过 stdin 行协议接收 move / click / hide，与引擎进程分离</text>
+
+  <!-- macOS Engine -->
+  <rect class="panel" x="24" y="345" width="1072" height="453" rx="15"/>
+  <text class="main worker" x="560" y="389">macOS Engine · Swift</text>
+  <rect class="pill pill-ok" x="930" y="366" width="118" height="28" rx="14"/>
+  <text class="pill pill-ok-t" x="989" y="385">已实现</text>
+
+  <g>
+    <!-- Accessibility -->
+    <rect class="tile" x="43" y="413" width="510" height="112" rx="12"/>
+    <use xlink:href="#click" x="298" y="436"/>
+    <text class="main label" x="298" y="473">Accessibility</text><text class="muted tile-sub" x="298" y="505">AXUIElement 语义操作</text>
+    <rect class="pill pill-ok" x="463" y="425" width="76" height="24" rx="12"/>
+    <text class="pill pill-ok-t" x="501" y="442">已实现</text>
+
+    <!-- ScreenCaptureKit -->
+    <rect class="tile" x="567" y="413" width="510" height="112" rx="12"/>
+    <use xlink:href="#eye" x="822" y="435"/>
+    <text class="main label" x="822" y="473">ScreenCaptureKit</text><text class="muted tile-sub" x="822" y="505">窗口级捕获</text>
+    <rect class="pill pill-ok" x="987" y="425" width="76" height="24" rx="12"/>
+    <text class="pill pill-ok-t" x="1025" y="442">已实现</text>
+
+    <!-- Targeted Input -->
+    <rect class="tile" x="43" y="538" width="510" height="112" rx="12"/>
+    <use xlink:href="#cursor" x="298" y="560"/>
+    <text class="main label" x="298" y="598">Targeted Input</text><text class="muted tile-sub" x="298" y="630">CGEvent postToPid · 对遮挡免疫</text>
+    <rect class="pill pill-ok" x="463" y="550" width="76" height="24" rx="12"/>
+    <text class="pill pill-ok-t" x="501" y="567">已实现</text>
+
+    <!-- Session -->
+    <rect class="tile" x="567" y="538" width="510" height="112" rx="12"/>
+    <use xlink:href="#refresh" x="822" y="560"/>
+    <text class="main label" x="822" y="598">Session</text><text class="muted tile-sub" x="822" y="630">会话复用 · 授权白名单</text>
+    <rect class="pill pill-ok" x="987" y="550" width="76" height="24" rx="12"/>
+    <text class="pill pill-ok-t" x="1025" y="567">已实现</text>
+
+    <!-- Ghost Overlay -->
+    <rect class="tile" x="43" y="663" width="510" height="112" rx="12"/>
+    <use xlink:href="#cursor" x="298" y="685"/>
+    <text class="main label" x="298" y="723">Ghost Overlay</text><text class="muted tile-sub" x="298" y="755">NSPanel · LSUIElement</text>
+    <rect class="pill pill-ok" x="463" y="675" width="76" height="24" rx="12"/>
+    <text class="pill pill-ok-t" x="501" y="692">已实现</text>
+
+    <!-- Experience · Verifier -->
+    <rect class="tile" x="567" y="663" width="510" height="112" rx="12"/>
+    <use xlink:href="#check" x="822" y="685"/>
+    <text class="main label" x="822" y="723">Experience · Verifier</text><text class="muted tile-sub" x="822" y="755">经验复用 · 四分类验证</text>
+    <rect class="pill pill-ok" x="987" y="675" width="76" height="24" rx="12"/>
+    <text class="pill pill-ok-t" x="1025" y="692">已实现</text>
+  </g>
+
+  <text class="muted sub" x="560" y="832">与 Windows 共用同一份跨平台契约：动作、结果结构、验证判据完全一致。</text>
+
+  <g>
+    <circle class="dot-ok" cx="150" cy="866" r="4"/>
+    <text class="muted foot left" x="164" y="871">已实现</text>
+    <circle class="dot-exp" cx="300" cy="866" r="4"/>
+    <text class="muted foot left" x="314" y="871">实验性 · 编译与单测通过，真机 GUI 未验收</text>
+    <circle class="dot-plan" cx="760" cy="866" r="4"/>
+    <text class="muted foot left" x="774" y="871">规划中 · 尚未实现</text>
+  </g>
+  <text class="muted foot" x="560" y="896">尚未实现：经验库扩展（跨版本迁移、失败样本回收）、目标窗口自动重绑定。</text>
+</svg>

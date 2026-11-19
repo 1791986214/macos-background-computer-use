@@ -54,6 +54,10 @@ internal sealed class LiveCapture : IDisposable
     private Thread? _pump;
     private volatile bool _disposed;
 
+    /// <summary>会话代号：每新建一个捕获流就 +1，用于区分「仍在同一路流」和「重建过」。</summary>
+    private static long _generationSeed;
+    public long Generation { get; }
+
     private LiveCapture(IntPtr hwnd, ID3D11Device device, ID3D11DeviceContext context,
                         IDirect3DDevice winrtDevice, Direct3D11CaptureFramePool pool,
                         GraphicsCaptureSession session)
@@ -64,6 +68,7 @@ internal sealed class LiveCapture : IDisposable
         _winrtDevice = winrtDevice;
         _pool = pool;
         _session = session;
+        Generation = Interlocked.Increment(ref _generationSeed);
     }
 
     public IntPtr Hwnd => _hwnd;
@@ -242,24 +247,47 @@ internal sealed class LiveCapture : IDisposable
     {
         lock (_gate)
         {
-            if (_frameCount > 0 && _latest.Length > 0 &&
-                Environment.TickCount64 - _stampMs <= maxAgeMs)
+            var age = Environment.TickCount64 - _stampMs;
+            if (_frameCount > 0 && _latest.Length > 0 && age <= maxAgeMs)
             {
-                result = new CaptureResult
-                {
-                    Ok = true,
-                    Method = "graphics_capture_live",
-                    Bgra = _latest,
-                    Width = _width,
-                    Height = _height,
-                    Ms = 0,
-                };
-                result.Warnings.Add($"持久会话 #{_frameCount} 帧，帧龄 {Environment.TickCount64 - _stampMs}ms");
+                result = BuildResult(age, stale: false);
                 return true;
             }
         }
         result = null!;
         return false;
+    }
+
+    /// <summary>组装带帧身份的捕获结果（目标句柄、帧号、帧龄、会话代号）。</summary>
+    private CaptureResult BuildResult(long ageMs, bool stale)
+    {
+        var pid = 0;
+        try
+        {
+            Native.GetWindowThreadProcessId(_hwnd, out var p);
+            pid = (int)p;
+        }
+        catch { }
+
+        var r = new CaptureResult
+        {
+            Ok = true,
+            Method = "graphics_capture_live",
+            Bgra = _latest,
+            Width = _width,
+            Height = _height,
+            Ms = 0,
+            TargetHwnd = "0x" + _hwnd.ToInt64().ToString("X"),
+            TargetPid = pid,
+            FrameId = _frameCount,
+            FrameTimestamp = DateTime.Now.AddMilliseconds(-ageMs).ToString("o"),
+            FrameAgeMs = ageMs,
+            CaptureGeneration = Generation,
+            IsStale = stale,
+            Dpi = 96,
+        };
+        r.Warnings.Add($"持久会话 #{_frameCount} 帧，帧龄 {ageMs}ms，generation={Generation}");
+        return r;
     }
 
     public void Dispose()

@@ -25,6 +25,27 @@ public sealed class CaptureResult
     /// <summary>降级时说明原因（例如 Graphics Capture 不可用，退回 PrintWindow）。</summary>
     public List<string> Warnings { get; } = new();
 
+    // ---- 帧身份与新鲜度（v0.6.5）----
+    // 目的：调用方必须能判断「这张图是不是目标窗口、是不是刚拍的、有多旧」。
+    // 只靠比对 PNG 是否相同，无法证明目标身份，也无法证明时序。
+
+    /// <summary>目标窗口句柄，证明这张图属于哪个窗口。</summary>
+    public string? TargetHwnd { get; set; }
+    /// <summary>目标进程 id。</summary>
+    public int TargetPid { get; set; }
+    /// <summary>持久会话内的递增帧号（每次成功读回 +1）。</summary>
+    public long FrameId { get; set; }
+    /// <summary>帧产生时刻（本地时间，ISO 8601）。</summary>
+    public string? FrameTimestamp { get; set; }
+    /// <summary>取用时该帧已存在多久（毫秒）。越小越新鲜。</summary>
+    public long FrameAgeMs { get; set; }
+    /// <summary>捕获会话代号：每次重建会话 +1，用于区分「同一个流」还是「换了新流」。</summary>
+    public long CaptureGeneration { get; set; }
+    /// <summary>帧是否已过期（超过 maxAge）。过期帧不能用于判定操作结果。</summary>
+    public bool IsStale { get; set; }
+    /// <summary>窗口 DPI（100 = 96dpi）。</summary>
+    public int Dpi { get; set; }
+
     public byte[] ToPng() => PngWriter.FromBgra(Bgra, Width, Height, opaque: true);
 }
 
@@ -47,7 +68,41 @@ public sealed class CaptureResult
 /// </summary>
 public static class WindowCapture
 {
+    /// <summary>
+    /// 统一出口：无论走哪条路径（持久会话 / 一次性 WGC / PrintWindow），
+    /// 返回前都必须带齐目标身份。调用方只有拿到 targetHwnd 才能证明"这张图是谁的"。
+    /// </summary>
     public static CaptureResult Capture(IntPtr hwnd, bool preferGraphicsCapture = true, bool useLiveSession = true)
+    {
+        var r = CaptureCore(hwnd, preferGraphicsCapture, useLiveSession);
+
+        if (string.IsNullOrEmpty(r.TargetHwnd))
+            r.TargetHwnd = "0x" + hwnd.ToInt64().ToString("X");
+
+        if (r.TargetPid == 0)
+        {
+            try
+            {
+                Native.GetWindowThreadProcessId(hwnd, out var pid);
+                r.TargetPid = (int)pid;
+            }
+            catch { }
+        }
+
+        if (r.Dpi == 0) r.Dpi = 96;
+
+        // PrintWindow 走的是 GDI，可能拿到目标窗口上一次绘制的缓存帧，
+        // 新鲜度无法保证 —— 明确标记，绝不让它伪装成实时帧。
+        if (r.Method == "printwindow" && r.Ok)
+        {
+            r.IsStale = true;
+            r.Warnings.Add("PrintWindow 降级路径：可能返回缓存画面，frameAge / frameId 不可信，不可用于判定操作结果");
+        }
+
+        return r;
+    }
+
+    private static CaptureResult CaptureCore(IntPtr hwnd, bool preferGraphicsCapture, bool useLiveSession)
     {
         if (hwnd == IntPtr.Zero || !Native.IsWindow(hwnd))
         {

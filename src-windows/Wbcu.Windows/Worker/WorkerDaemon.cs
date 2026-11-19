@@ -155,6 +155,17 @@ public static class WorkerDaemon
                     ["height"] = result.Height,
                     ["method"] = result.Method,
                     ["captureMs"] = Math.Round(sw.Elapsed.TotalMilliseconds, 2),
+
+                    // 帧身份与新鲜度：调用方据此判断「是不是目标窗口、是不是刚拍的」
+                    ["targetHwnd"] = result.TargetHwnd,
+                    ["targetPid"] = result.TargetPid,
+                    ["frameId"] = result.FrameId,
+                    ["frameTimestamp"] = result.FrameTimestamp,
+                    ["frameAgeMs"] = result.FrameAgeMs,
+                    ["captureGeneration"] = result.CaptureGeneration,
+                    ["contentSize"] = $"{result.Width}x{result.Height}",
+                    ["dpi"] = result.Dpi,
+                    ["isStale"] = result.IsStale,
                 };
 
                 if (req.TryGetProperty("out", out var outp) && outp.GetString() is { Length: > 0 } path)

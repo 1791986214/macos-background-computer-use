@@ -405,7 +405,10 @@ public static class Commands
 
         // ① 优先走常驻 Worker：跨命令复用同一个 WGC 会话，省掉 .NET 冷启动（实测 750–1180ms）
         //    与帧池重建。连不上就静默回落本地，绝不阻塞。
-        if (!ctx.Args.Flag("no-worker"))
+        // Worker 改为 opt-in：v0.6.5 验证中发现激活 Worker 的路径在部分情况下会拖住命令
+        // （worker 侧管道重建与 CLI 连接竞态），为保证 capture 永远不挂，默认走本地稳定路径。
+        // 需要加速时显式 --use-worker；Worker 能力与代码全部保留。
+        if (ctx.Args.Flag("use-worker") && !ctx.Args.Flag("no-worker"))
         {
             if (WorkerClient.Ensure(120))
             {
@@ -450,6 +453,16 @@ public static class Commands
            .With("width", result.Width)
            .With("height", result.Height)
            .With("captureMs", Math.Round(result.Ms, 2))
+           // 帧身份与新鲜度：调用方据此判断目标身份与时序，不能只看图片是否变化
+           .With("targetHwnd", result.TargetHwnd)
+           .With("targetPid", result.TargetPid)
+           .With("frameId", result.FrameId)
+           .With("frameTimestamp", result.FrameTimestamp)
+           .With("frameAgeMs", result.FrameAgeMs)
+           .With("captureGeneration", result.CaptureGeneration)
+           .With("contentSize", $"{result.Width}x{result.Height}")
+           .With("dpi", result.Dpi)
+           .With("isStale", result.IsStale)
            .With("session", rec?.Id)
            .With("window", win.ToJson());
 

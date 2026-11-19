@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    轻量热路径客户端。
+
+    存在的唯一理由：wbcu 主程序加载了 Vortice / WinRT / UIA 一整套程序集，
+    每条命令冷启动 750–1180ms；而真正想做的事（连 Pipe、发一条 JSON、收结果）
+    只需要 System.IO.Pipes + System.Text.Json。
+
+    注意：本机没有 MSVC 链接器，NativeAOT 与 C++/Rust 方案都不可行，
+    所以这里走 ReadyToRun（crossgen2 是托管的，不需要原生工具链）。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>wbcuf</AssemblyName>
+    <RootNamespace>Wbcu.Fast</RootNamespace>
+
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishReadyToRunComposite>false</PublishReadyToRunComposite>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 短命进程：关闭分层编译，直接编译优化代码，省掉 tier-0 → tier-1 的切换 -->
+    <TieredCompilation>false</TieredCompilation>
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <EventSourceSupport>false</EventSourceSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+  </PropertyGroup>
+
+</Project>

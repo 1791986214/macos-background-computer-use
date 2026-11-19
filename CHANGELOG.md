@@ -5,6 +5,69 @@
 
 ## [Unreleased]
 
+## [0.6.5] — 2026-11-19
+
+围绕「每条命令 1 秒」这个真瓶颈做优化，同时补齐帧身份与测试资产。
+
+### 新增：轻量热路径客户端 `wbcuf`（`src-windows/Wbcu.Fast/`）
+
+**先说结论：NativeAOT 与 C++/Rust 两条路在本机都不可行** —— 这台机器没有任何原生工具链
+（无 MSVC / cl.exe，也无 gcc / clang / rustc），NativeAOT 缺链接器无法出二进制。
+
+退而求其次，做了**零 COM 依赖的轻量 .NET 客户端**（只引用 System.IO.Pipes + System.Text.Json，
+ReadyToRun + 关闭分层编译）：
+
+| 客户端 | 冷启动（实测 5 次） |
+|---|---|
+| `wbcu version`（主程序，加载 Vortice/WinRT/UIA） | 788–819ms |
+| **`wbcuf ping`（轻量）** | **293–341ms**（其中 IPC 仅 8ms） |
+
+提速约 2.5 倍，但**达不到 10–30ms**：300ms 里绝大部分是 .NET runtime 初始化，
+不换原生运行时无法再降。这是本机真实底线，不粉饰。
+
+`wbcuf` 只做「解析参数 → 连 Pipe → 发 JSON → 打印」，不含任何捕获/输入逻辑；
+退出码 2 表示 Worker 不可用，调用方应回退 `wbcu`。
+
+### 新增：帧身份与新鲜度
+
+每张截图现在都带：
+
+`targetHwnd` / `targetPid` / `frameId` / `frameTimestamp` / `frameAgeMs` /
+`captureGeneration` / `contentSize` / `dpi` / `isStale`
+
+- 统一在 `WindowCapture.Capture` 出口填充，**任何降级路径都带身份**
+- `PrintWindow` 路径强制 `isStale=true` 并给出警告：GDI 可能返回缓存帧，
+  frameAge / frameId 不可信，不可用于判定操作结果
+- 实测（测试夹具）：`hwnd=0x9012B8`、`pid=27316`、`frameAge=15–16ms`、`generation=1`、`stale=false`
+
+### 变更：Worker 改为 opt-in
+
+v0.6.4 让 `capture` 默认走 Worker。本轮验证中出现**命令被拖住**（命令长时间不返回），
+判断是 worker 侧管道重建与 CLI 连接存在竞态。
+
+处理：默认回到稳定的本地路径，需要加速时显式 `--use-worker`。
+Worker 代码与能力全部保留，问题已记录待修。
+
+理由很直接：不能为了 45% 的提速，让主路径有挂死风险。
+
+### 新增：遮挡与新鲜度测试夹具入库
+
+`tests/fixtures/win/`：
+
+- `capture_fixture.py` —— 目标窗口每 300ms 计数器+1 且换色，计数器同时写进标题（可被 UIA 直读，免 OCR）
+- `occluder.py` —— 可控位置/尺寸的置顶遮挡窗
+- `occlusion_matrix.py` —— 七场景遮挡矩阵，用「同场景两次 PNG 是否相同」判定实时性
+- `frame_identity_test.py` —— 帧身份/新鲜度验证
+
+### 未完成
+
+- Session 自动重绑定（仍缺）
+- App Experience Memory 扩展（Calculator/Notepad 经验积累未做）
+- `install.ps1` 版本同步（`doctor` 仍报 skill/engine 版本不一致）
+- Worker 管道竞态根因修复
+- 100 次采样 P50/P95 性能报告
+- 企业微信 A/B/C/D（本轮企业微信未运行）
+
 ## [0.6.4] — 2026-11-19
 
 在 v0.6.3 的 WGC 成果上做常驻化与验收修正，**没有重写捕获模块**。

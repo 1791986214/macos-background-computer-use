@@ -42,21 +42,21 @@
 
   <use xlink:href="#down" x="499" y="316"/>
   <text class="muted sub" x="578" y="322">Named Pipe</text>
-  <text class="muted foot" x="560" y="338">当前版本：命名管道仅用于 Ghost 覆盖层控制，主链路为每次调用一个 wbcu.exe</text>
+  <text class="muted foot" x="560" y="338">Named Pipe（CurrentUserOnly）：CLI ↔ 常驻 Worker 传输捕获请求；Ghost 覆盖层另有独立管道</text>
 
   <!-- Persistent .NET Worker — 规划中（容器保持原布局） -->
   <rect class="panel" x="24" y="345" width="1072" height="453" rx="15"/>
   <text class="main worker" x="560" y="389">Persistent .NET Worker</text>
-  <rect class="pill pill-plan" x="900" y="366" width="118" height="28" rx="14"/>
-  <text class="pill pill-plan-t" x="959" y="385">规划中</text>
+  <rect class="pill pill-ok" x="900" y="366" width="118" height="28" rx="14"/>
+  <text class="pill pill-ok-t" x="959" y="385">已实现</text>
 
   <g>
     <!-- WGC — 实验性 -->
     <rect class="tile" x="43" y="413" width="510" height="112" rx="12"/>
     <use xlink:href="#eye" x="298" y="435"/>
     <text class="main label" x="298" y="473">WGC</text><text class="muted tile-sub" x="298" y="505">常驻窗口捕获</text>
-    <rect class="pill pill-exp" x="463" y="425" width="76" height="24" rx="12"/>
-    <text class="pill pill-exp-t" x="501" y="442">实验性</text>
+    <rect class="pill pill-ok" x="463" y="425" width="76" height="24" rx="12"/>
+    <text class="pill pill-ok-t" x="501" y="442">已实现</text>
 
     <!-- UI Automation — 已实现 -->
     <rect class="tile" x="567" y="413" width="510" height="112" rx="12"/>
@@ -94,7 +94,7 @@
     <text class="pill pill-ok-t" x="1025" y="692">已实现</text>
   </g>
 
-  <text class="muted sub" x="560" y="832">重型引擎保持常驻，轻量客户端负责传递指令。</text>
+  <text class="muted sub" x="560" y="832">Worker 保持常驻并复用 WGC 会话；轻量客户端仍待实现。</text>
 
   <!-- 状态图例 -->
   <g>
@@ -105,5 +105,5 @@
     <circle class="dot-plan" cx="760" cy="866" r="4"/>
     <text class="muted foot left" x="774" y="871">规划中 · 尚未实现</text>
   </g>
-  <text class="muted foot" x="560" y="896">上图为目标架构；虚线外框内的能力以右侧标记为准，未标记为已实现的不得对外宣称可用。</text>
+  <text class="muted foot" x="560" y="896">上图对应当前实现（v0.6.4）；未标记为已实现的模块不得对外宣称可用。</text>
 </svg>

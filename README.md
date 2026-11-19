@@ -6,7 +6,7 @@
 
 WorkBuddy 的第三只手 —— 持续感知、精准操作、后台执行、经验学习。
 
-<sub>macOS · Windows　│　Native desktop automation for agents　│　v0.6.2</sub>
+<sub>macOS v0.6.2 · Windows v0.6.4　│　Native desktop automation for agents</sub>
 
 </div>
 
@@ -70,11 +70,14 @@ width="900">
 Continuous learning.</sub>
 </p>
 
-上图是**目标架构**，模块状态以图中标记为准：
+上图是当前架构，模块状态以图中标记为准：
 
-- **已实现** —— UI Automation、Session、Experience、Verifier。其中 UI Automation 已在 Windows 10 19045 真机验证：记事本后台写入 `success`（`uia_setvalue`，置信度 0.95），读回值一致，`frontAppPreserved` 与 `physicalCursorPreserved` 均为 `true`。
-- **实验性** —— WGC（Windows Graphics Capture）与 Ghost Cursor。代码与单元测试完整，真机 GUI 套件尚未跑绿；截图可退 PrintWindow（实测 992×624 / 21.5 ms），覆盖层的 DWM 合成观感待验收。
-- **规划中** —— Lightweight Client、Persistent .NET Worker、经验库扩展、目标窗口自动重绑定。当前每个动作各起一次 `wbcu.exe`，命名管道只用于 Ghost 覆盖层控制。
+- **已实现** —— UI Automation、WGC、Session、Experience、Verifier、Persistent Worker。
+  - UI Automation 已在 Windows 10 19045 真机验证：记事本后台写入 `success`（`uia_setvalue`，0.95），读回一致，`frontAppPreserved` 与 `physicalCursorPreserved` 均为 `true`。
+  - WGC（Windows Graphics Capture）已通过真机验收矩阵：完全可见 / 部分遮挡 / 四周外扩完全遮挡 / 连续切前台 / 移动 / 缩放 / 最小化，用「同一场景连续两帧不同」判定是否为实时画面。
+  - 常驻 Worker 经 Named Pipe（`CurrentUserOnly`）复用 WGC 会话与帧池，抵消 CLI 每次 750–1180 ms 的 .NET 冷启动。
+- **实验性** —— Ghost Cursor。渲染与窗口属性已核对，DWM 合成观感待验收。
+- **规划中** —— Lightweight Client（NativeAOT / C++，目标是把 CLI 冷启动也消掉）、经验库扩展、目标窗口自动重绑定。
 
 细节见 [Windows 架构](docs/windows-architecture.md) 与 [Windows 能力矩阵](docs/windows-capability-matrix.md)。
 
@@ -144,7 +147,9 @@ wbcu session end --id <sid>
 |---|---|---|
 | 单次点击（命中经验） | 77 ms | 未实测 |
 | 单次点击（冷启动，首次解析） | 110 ms | 未实测 |
-| 窗口截图 | ScreenCaptureKit 持续流 | PrintWindow 21.5 ms（992×624） |
+| CLI 冷启动（每次调用） | — | 750–1180 ms（Worker 已可绕开） |
+| 窗口截图（WGC 命中会话） | ScreenCaptureKit 持续流 | 约 210 ms |
+| 窗口截图（PrintWindow 兜底） | — | 21.5 ms（992×624） |
 | 虚拟光标渲染 | — | 4.77 ms/帧 @252 px（60 fps） |
 | 覆盖层静态开销 | — | 静止不重绘（脏标记） |
 
@@ -174,7 +179,7 @@ wbcu session end --id <sid>
 | 方向 | 状态 | 说明 |
 |---|---|---|
 | Windows GUI 验收套件跑绿 | 进行中 | 套件已就绪，需交互式桌面；全绿后才把 `not_tested` 升级为 `supported` |
-| Lightweight Client + 常驻 Worker | 规划中 | 消除每次调用重复启动 .NET 运行时的开销，压缩首次动作延迟 |
+| Lightweight Client（NativeAOT / C++） | 规划中 | 常驻 Worker 已落地，剩下的是把 CLI 冷启动 750–1180 ms 也消掉 |
 | 经验库扩展 | 规划中 | 跨版本迁移、失败样本回收、按应用版本淘汰 |
 | 目标窗口自动重绑定 | 规划中 | 目标重启或换窗口后自动接续会话，而不是报 `session_stale` |
 | npm registry 正式发布 | 待授权 | 包已构建并校验，待 npm 账号授权后推送 |

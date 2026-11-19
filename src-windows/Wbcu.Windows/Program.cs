@@ -27,7 +27,7 @@ internal static class Program
         var ctx = new Ctx(Args.Parse(argv.Skip(1).ToList()));
 
         // 后台守护进程不记命令标记（否则追踪器会把它自己算成「抢前台的人」）
-        var isDaemon = argv.Length > 1 && argv[1] == "__daemon";
+        var isDaemon = argv.Length > 1 && (argv[1] == "__daemon" || argv[1] == "__worker");
         if (!isDaemon && cmd != "trace" && cmd != "version" && cmd != "selftest")
         {
             Trace.ActivationTrace.MarkStart(cmd + (argv.Length > 1 ? " " + argv[1] : ""));
@@ -56,6 +56,7 @@ internal static class Program
                 "verify" => Commands.Commands.VerifyCmd(ctx),
                 "cursor" => Commands.Commands.CursorCmd(ctx),
                 "ghost" => Commands.Commands.GhostCmd(ctx),
+                "__worker" => Commands.Commands.WorkerCmd(ctx),
                 "trace" => Commands.Commands.TraceCmd(ctx),
                 "experience" => Commands.Commands.ExperienceCmd(ctx),
                 "perf" => Commands.Commands.PerfCmd(ctx),

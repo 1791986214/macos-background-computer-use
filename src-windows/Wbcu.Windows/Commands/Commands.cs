@@ -10,6 +10,7 @@ using Wbcu.Windows.Input;
 using Wbcu.Windows.Launch;
 using Wbcu.Windows.Session;
 using Wbcu.Windows.Trace;
+using Wbcu.Windows.Worker;
 using Wbcu.Windows.Uia;
 using Wbcu.Windows.Verify;
 using Wbcu.Windows.Win32;
@@ -391,6 +392,43 @@ public static class Commands
         var (rec, win) = Common.Target(ctx);
         var sw = Stopwatch.StartNew();
 
+        var outPath = ctx.Args.Str("out");
+        if (string.IsNullOrEmpty(outPath))
+        {
+            outPath = Path.Combine(Paths.TempDir, $"shot-{DateTime.Now:HHmmss}-{win.Hwnd.ToInt64():X}.png");
+        }
+        else if (!Path.IsPathRooted(outPath))
+        {
+            outPath = Path.GetFullPath(outPath!);
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
+
+        // ① 优先走常驻 Worker：跨命令复用同一个 WGC 会话，省掉 .NET 冷启动（实测 750–1180ms）
+        //    与帧池重建。连不上就静默回落本地，绝不阻塞。
+        if (!ctx.Args.Flag("no-worker"))
+        {
+            if (WorkerClient.Ensure(120))
+            {
+                var wr = WorkerClient.Capture(win.Hwnd, outPath, timeoutMs: 250);
+                if (wr is { Ok: true })
+                {
+                    var wenv = ResultEnvelope.Success(Actions.Capture);
+                    wenv.Method = wr.Method;
+                    wenv.ElapsedMs = sw.Elapsed.TotalMilliseconds;
+                    wenv.With("path", outPath)
+                        .With("width", wr.Width)
+                        .With("height", wr.Height)
+                        .With("captureMs", Math.Round(sw.Elapsed.TotalMilliseconds, 2))
+                        .With("worker", true)
+                        .With("session", rec?.Id)
+                        .With("window", win.ToJson());
+                    foreach (var w in wr.Warnings) wenv.Warn(w);
+                    ctx.Emit(wenv);
+                    return ExitCodes.Ok;
+                }
+            }
+        }
+
         var result = WindowCapture.Capture(win.Hwnd, preferGraphicsCapture: !ctx.Args.Flag("printwindow"));
         var env = ResultEnvelope.Success(Actions.Capture);
         env.Method = result.Method;
@@ -406,17 +444,6 @@ public static class Commands
             return ExitCodes.NotDelivered;
         }
 
-        var outPath = ctx.Args.Str("out");
-        if (string.IsNullOrEmpty(outPath))
-        {
-            outPath = Path.Combine(Paths.TempDir, $"shot-{DateTime.Now:HHmmss}-{win.Hwnd.ToInt64():X}.png");
-        }
-        else if (!Path.IsPathRooted(outPath))
-        {
-            outPath = Path.GetFullPath(outPath!);
-        }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
         File.WriteAllBytes(outPath, result.ToPng());
 
         env.With("path", outPath)
@@ -736,6 +763,15 @@ public static class Commands
     }
 
     // ---------------- Ghost ----------------
+
+    /// <summary>内部命令：常驻 Worker 入口（由 CLI 自动拉起，不对外暴露）。</summary>
+    public static int WorkerCmd(Ctx ctx)
+    {
+        var pipe = ctx.Args.Str("pipe") ?? WorkerClient.PipeName;
+        using var cts = new CancellationTokenSource();
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        return WorkerDaemon.Run(pipe, cts.Token);
+    }
 
     public static int GhostCmd(Ctx ctx)
     {

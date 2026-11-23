@@ -43,7 +43,11 @@ for fname, h in entries:
                "download/" + tag + "/" + fname)
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             path = tmp.name
-        rc = subprocess.call(["curl", "-fsSL", "--max-time", "180", "-o", path, url])
+        # 加 cache-bust：GitHub 的 CDN 会按资产名缓存，重传后短时间内仍可能返回旧字节，
+        # 直接比对会误报「资产不一致」。带一个时间戳参数可强制回源。
+        bust = url + ("&" if "?" in url else "?") + "cb=" + str(int(__import__("time").time()))
+        rc = subprocess.call(["curl", "-fsSL", "--retry", "2", "--retry-delay", "1",
+                              "--max-time", "300", "-o", path, bust])
         if rc != 0:
             print(f"WARN: 下载失败，跳过远端比对 {fname}"); continue
         actual = hashlib.sha256(open(path, "rb").read()).hexdigest()

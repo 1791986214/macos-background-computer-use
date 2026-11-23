@@ -44,8 +44,11 @@ Expand-Archive wbcu.zip -DestinationPath wbcu -Force
 powershell -ExecutionPolicy Bypass -File wbcu\install.ps1 -Source wbcu
 ```
 
-当前包 SHA256：`3746e12fe68b5985a263ca7462847fd229fc5d01a04b948c7409bb98d6c37e1e`
+当前包 SHA256：`3ec08e0e5f7f866db873274f421eaa530db2921a0adb07618bb5e1c3aaadffe3`
 （`Get-FileHash wbcu.zip -Algorithm SHA256` 自行核对）。
+
+> 这一段的值必须与 `npm/lib/platform.js` 里登记的 `sha256` 一致；
+> 不一致时以发布页与 `platform.js` 为准，并跑 `./scripts/check-release-hashes.sh` 定位漂移。
 
 > ⚠️ `v0.6.2-rc1` 是**预发布**：编译、单测、契约一致性已验证，**真机 GUI 验收未做**。
 > 装完先跑第 4 节自检；要宣称「能用」必须跑第 5 节。

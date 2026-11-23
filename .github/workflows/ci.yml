@@ -36,6 +36,10 @@ jobs:
       - name: 单元测试（纯逻辑，无需 TCC 授权）
         run: ./tests/run-all.sh unit
 
+      - name: 发布哈希一致性（文档 vs npm 登记）
+        # 手写的 SHA256 一定会腐烂：v0.6.2 的安装文档曾挂着 v0.6.0 的哈希。
+        run: ./scripts/check-release-hashes.sh
+
       - name: 自检报告（JSON）
         if: always()
         run: ./bin/wbcu selftest --json > selftest.json || true

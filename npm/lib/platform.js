@@ -17,13 +17,13 @@ const RELEASE_BASE = `https://github.com/1791986214/macos-background-computer-us
 const ASSETS = {
     'win32-x64': {
         file: 'wbcu-windows-win-x64-0.6.5.zip',
-        sha256: 'b83c6becde4893e46c16b47e7563b7b6bb44d04887f9f8061d2ef5215a6c8c5c',
+        sha256: '08aa5eecb2c61673565658f6b9e82873ab09f8c1a6d07d31813bc40fdd8b536b',
         engine: 'wbcu.exe',
         extractRoot: '',
     },
     'darwin-arm64': {
         file: 'wbcu-macos-arm64-0.6.5.zip',
-        sha256: '0e1e0409448a3f21ffcd5d5824cb9a57cbdd6107a21c16d610f06fc823ca9c6d',
+        sha256: 'ce2e034f92cef9ab29b0d7759948d5fd132a74f674af60a9f447da6401fe1355',
         engine: 'wbcu',
         extractRoot: '',
         // macOS 的幽灵光标覆盖层必须落在 ~/.local/share/wbcu/ThirdHandOverlay.app，

@@ -204,14 +204,14 @@ wbcu.exe session end --id $sid
 
 ### 工具选择规则（必须遵守）
 
-**已经建立 Third Hand 目标窗口会话时，针对该窗口的一切视觉观察，一律用绑定 HWND 的 `wbcu capture`。**
+**已经建立 Third Hand 目标窗口会话时，针对该窗口的一切视觉观察，一律用绑定 HWND 的截屏命令：Windows 是 `wbcu.exe capture`，macOS 是 `wbcu session capture` / `wbcu shot`。**
 
 - 不得为了绕过捕获异常，自行改用桌面截图、屏幕区域截图或前台应用截图，再当成目标窗口画面。
   这类替代品抓的是"屏幕上最上层的像素"，用户一切窗口就会截到别的软件。
 - 允许 WorkBuddy 在**其他独立任务**中继续使用自己的截图工具（浏览器、普通文件处理等），不需要禁用。
 - 这是**工具选择规则**，不是全局工具拦截机制 —— 不做工具路由门禁。
 
-判断依据很简单：要看的画面属于某个已 attach 的窗口，就走 `wbcu capture`；
+判断依据很简单：要看的画面属于某个已 attach 的窗口，就走 `wbcu.exe capture`（Windows）/ `wbcu session capture`（macOS）；
 不属于任何目标窗口（比如看整个桌面布局），才用自己的截图。
 
 ### 常驻 Worker（v0.6.4）

@@ -49,7 +49,7 @@ powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/m
 
 ```powershell
 $u      = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/wbcu-windows-win-x64-0.6.5.zip"
-$expect = "b83c6becde4893e46c16b47e7563b7b6bb44d04887f9f8061d2ef5215a6c8c5c"
+$expect = "08aa5eecb2c61673565658f6b9e82873ab09f8c1a6d07d31813bc40fdd8b536b"
 $zip    = "wbcu.zip"
 
 # 1) 下载

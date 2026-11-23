@@ -6,7 +6,7 @@
 
 WorkBuddy 的第三只手 —— 持续感知、精准操作、后台执行、经验学习。
 
-<sub>macOS v0.6.2 · Windows v0.6.4　│　Native desktop automation for agents</sub>
+<sub>macOS v0.6.2 · Windows v0.6.5　│　Native desktop automation for agents</sub>
 
 </div>
 
@@ -72,12 +72,13 @@ Continuous learning.</sub>
 
 上图是当前架构，模块状态以图中标记为准：
 
-- **已实现** —— UI Automation、WGC、Session、Experience、Verifier、Persistent Worker。
+- **已实现** —— UI Automation、WGC、Session、Experience、Verifier、Persistent Worker、Lightweight Client（`wbcuf`）。
   - UI Automation 已在 Windows 10 19045 真机验证：记事本后台写入 `success`（`uia_setvalue`，0.95），读回一致，`frontAppPreserved` 与 `physicalCursorPreserved` 均为 `true`。
   - WGC（Windows Graphics Capture）已通过真机验收矩阵：完全可见 / 部分遮挡 / 四周外扩完全遮挡 / 连续切前台 / 移动 / 缩放 / 最小化，用「同一场景连续两帧不同」判定是否为实时画面。
-  - 常驻 Worker 经 Named Pipe（`CurrentUserOnly`）复用 WGC 会话与帧池，抵消 CLI 每次 750–1180 ms 的 .NET 冷启动。
+  - 常驻 Worker 经 Named Pipe（`CurrentUserOnly`）复用 WGC 会话与帧池；轻量客户端 `wbcuf` 只做参数解析 + IPC + JSON，冷启动从 788–819 ms 降到 293–341 ms（IPC 8 ms），Worker 不在时退出码 2、自动回退 `wbcu`。
+  - 每张截图都带帧身份（`targetHwnd` / `frameId` / `frameAgeMs` / `isStale` 等），PrintWindow 兜底会强制标记 `isStale`。
 - **实验性** —— Ghost Cursor。渲染与窗口属性已核对，DWM 合成观感待验收。
-- **规划中** —— Lightweight Client（NativeAOT / C++，目标是把 CLI 冷启动也消掉）、经验库扩展、目标窗口自动重绑定。
+- **规划中** —— 原生运行时客户端（NativeAOT / C++：本机缺 MSVC 与 clang，暂不可行；余下 ~300 ms 全是 .NET 初始化）、经验库扩展、目标窗口自动重绑定。
 
 细节见 [Windows 架构](docs/windows-architecture.md) 与 [Windows 能力矩阵](docs/windows-capability-matrix.md)。
 
@@ -147,7 +148,7 @@ wbcu session end --id <sid>
 |---|---|---|
 | 单次点击（命中经验） | 77 ms | 未实测 |
 | 单次点击（冷启动，首次解析） | 110 ms | 未实测 |
-| CLI 冷启动（每次调用） | — | 750–1180 ms（Worker 已可绕开） |
+| 冷启动（每次调用） | — | `wbcu` 788–819 ms / `wbcuf` 293–341 ms |
 | 窗口截图（WGC 命中会话） | ScreenCaptureKit 持续流 | 约 210 ms |
 | 窗口截图（PrintWindow 兜底） | — | 21.5 ms（992×624） |
 | 虚拟光标渲染 | — | 4.77 ms/帧 @252 px（60 fps） |
@@ -179,7 +180,7 @@ wbcu session end --id <sid>
 | 方向 | 状态 | 说明 |
 |---|---|---|
 | Windows GUI 验收套件跑绿 | 进行中 | 套件已就绪，需交互式桌面；全绿后才把 `not_tested` 升级为 `supported` |
-| Lightweight Client（NativeAOT / C++） | 规划中 | 常驻 Worker 已落地，剩下的是把 CLI 冷启动 750–1180 ms 也消掉 |
+| 原生运行时客户端（NativeAOT / C++） | 规划中 | `wbcuf` 已把冷启动压到 ~300 ms，剩余开销全是 .NET 初始化；本机缺编译工具链 |
 | 经验库扩展 | 规划中 | 跨版本迁移、失败样本回收、按应用版本淘汰 |
 | 目标窗口自动重绑定 | 规划中 | 目标重启或换窗口后自动接续会话，而不是报 `session_stale` |
 | npm registry 正式发布 | 待授权 | 包已构建并校验，待 npm 账号授权后推送 |

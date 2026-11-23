@@ -35,10 +35,10 @@
   <!-- Lightweight Client — 规划中 -->
   <rect class="panel" x="24" y="165" width="1072" height="122" rx="14"/>
   <text class="main head" x="560" y="201">Lightweight Client</text>
-  <rect class="pill pill-plan" x="946" y="181" width="118" height="28" rx="14"/>
-  <text class="pill pill-plan-t" x="1005" y="200">规划中</text>
-  <text class="muted sub" x="560" y="231">NativeAOT / C++ / 持久化 IPC 客户端</text>
-  <text class="accent small" x="560" y="260">目标：消除重复启动 .NET Runtime 的开销</text>
+  <rect class="pill pill-ok" x="946" y="181" width="118" height="28" rx="14"/>
+  <text class="pill pill-ok-t" x="1005" y="200">已实现</text>
+  <text class="muted sub" x="560" y="231">wbcuf · .NET ReadyToRun · 仅热路径（无捕获/输入逻辑）</text>
+  <text class="accent small" x="560" y="260">实测冷启动 788–819 ms → 293–341 ms（IPC 仅 8 ms）；原生运行时仍待评估</text>
 
   <use xlink:href="#down" x="499" y="316"/>
   <text class="muted sub" x="578" y="322">Named Pipe</text>
@@ -94,7 +94,7 @@
     <text class="pill pill-ok-t" x="1025" y="692">已实现</text>
   </g>
 
-  <text class="muted sub" x="560" y="832">Worker 保持常驻并复用 WGC 会话；轻量客户端仍待实现。</text>
+  <text class="muted sub" x="560" y="832">wbcuf 负责热路径，Worker 常驻复用 WGC 会话；冷启动余量受 .NET runtime 限制。</text>
 
   <!-- 状态图例 -->
   <g>
@@ -105,5 +105,5 @@
     <circle class="dot-plan" cx="760" cy="866" r="4"/>
     <text class="muted foot left" x="774" y="871">规划中 · 尚未实现</text>
   </g>
-  <text class="muted foot" x="560" y="896">上图对应当前实现（v0.6.4）；未标记为已实现的模块不得对外宣称可用。</text>
+  <text class="muted foot" x="560" y="896">上图对应当前实现（v0.6.5）；未标记为已实现的模块不得对外宣称可用。</text>
 </svg>

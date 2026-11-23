@@ -15,6 +15,10 @@ python3 - "$ROOT" "$REMOTE" <<'PY'
 import re, sys, subprocess, tempfile, os, hashlib
 root, remote = sys.argv[1], sys.argv[2] == "1"
 plat = open(os.path.join(root, "npm/lib/platform.js")).read()
+tag_m = re.search(r"RELEASE_TAG = '([^']+)'", plat)
+if not tag_m:
+    print("FAIL: platform.js 里找不到 RELEASE_TAG"); sys.exit(1)
+tag = tag_m.group(1)
 doc  = open(os.path.join(root, "docs/windows-installation.md")).read()
 
 entries = re.findall(r"file:\s*'([^']+)',\s*\n\s*sha256:\s*'([0-9a-f]{64})'", plat)
@@ -36,7 +40,7 @@ for fname, h in entries:
 
     if remote:
         url = ("https://github.com/1791986214/macos-background-computer-use/releases/"
-               "download/v0.6.2-rc1/" + fname)
+               "download/" + tag + "/" + fname)
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             path = tmp.name
         rc = subprocess.call(["curl", "-fsSL", "--max-time", "180", "-o", path, url])
@@ -49,6 +53,7 @@ for fname, h in entries:
         else:
             print(f"OK: 发布资产字节一致 {fname}")
 
+print(f"release tag: {tag}")
 print("RESULT:", "PASS" if fail == 0 else f"{fail} 处不一致")
 sys.exit(0 if fail == 0 else 1)
 PY

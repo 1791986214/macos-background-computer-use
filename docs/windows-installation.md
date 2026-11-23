@@ -6,9 +6,9 @@
 
 | 你要的东西 | 版本 | 里面是什么 |
 |---|---|---|
-| **可下载的预发布包** | `v0.6.2-rc1`（引擎 0.6.2） | 发布页资产，本文件的校验值对应它 |
-| **npm 安装包** | `workbuddy-third-hand@0.6.3`（内含引擎 0.6.2） | 0.6.3 只修了下载器（代理/镜像），引擎没变 |
-| **源码 / 真机验收版本** | `v0.6.5` | 含 `wbcuf`、帧身份、Worker opt-in；**尚未打包为发布资产** |
+| **可下载的预发布包** | `v0.6.5-rc1`（引擎 0.6.5） | 发布页资产，本文件的校验值对应它 |
+| **npm 安装包** | `workbuddy-third-hand@0.6.5`（内含引擎 0.6.5） | 包装器与引擎同版本，不再错位 |
+| **源码 / 真机验收版本** | `v0.6.5` | 就是上面这个包：含 `wbcuf`、帧身份、Worker opt-in |
 
 `wbcu.exe version` 显示的是**引擎**版本，与 npm 包版本不必然相同。
 
@@ -16,7 +16,7 @@
 ### 0.1 npm（已装 Node 18+ 时最省事）
 
 ```powershell
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.3.tgz
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/workbuddy-third-hand-0.6.5.tgz
 wbcu doctor
 ```
 
@@ -27,8 +27,8 @@ npm 包本身只有 7 KB：postinstall 会按当前平台下载对应的原生�
 离线/内网：
 
 ```powershell
-$env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.2.zip"
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.3.tgz
+$env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.5.zip"
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/workbuddy-third-hand-0.6.5.tgz
 ```
 
 > 本包尚未发布到 npm registry（`npm i -g workbuddy-third-hand` 暂时不可用），
@@ -39,7 +39,7 @@ npm i -g https://github.com/1791986214/macos-background-computer-use/releases/do
 在 Windows 上打开 **PowerShell**（普通用户即可，不需要管理员）：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/install-windows.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/install-windows.ps1 | iex"
 ```
 
 它会依次做：下载发布包 → 校验大小并打印 SHA256 → 解压到 `%TEMP%\wbcu-setup`
@@ -48,8 +48,8 @@ powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/m
 ### 0.3 手动安装：下载 → 校验 → 解压 → 安装（顺序不能反）
 
 ```powershell
-$u      = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/wbcu-windows-win-x64-0.6.2.zip"
-$expect = "3ec08e0e5f7f866db873274f421eaa530db2921a0adb07618bb5e1c3aaadffe3"
+$u      = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/wbcu-windows-win-x64-0.6.5.zip"
+$expect = "b83c6becde4893e46c16b47e7563b7b6bb44d04887f9f8061d2ef5215a6c8c5c"
 $zip    = "wbcu.zip"
 
 # 1) 下载
@@ -71,9 +71,9 @@ powershell -ExecutionPolicy Bypass -File wbcu\install.ps1 -Source wbcu
 `$expect` 必须与 `npm/lib/platform.js` 里登记的 `sha256` 一致。
 两者若不一致，以发布页和 `platform.js` 为准，并跑 `./scripts/check-release-hashes.sh` 定位漂移。
 
-> ⚠️ `v0.6.2-rc1` 是**预发布**，已验证与未验证要分清：
+> ⚠️ `v0.6.5-rc1` 是**预发布**（含 `wbcuf` 轻量客户端、帧身份、Worker opt-in），已验证与未验证要分清：
 >
-> - 已验证：编译、单测 65/65、契约一致性；**捕获与遮挡矩阵已在 Windows 10 19045 真机验收**
+> - 已验证：编译、单测 67/67、契约一致性；**捕获与遮挡矩阵已在 Windows 10 19045 真机验收**
 >   （完全可见 / 部分遮挡 / 四周外扩完全遮挡 / 切前台 / 移动 / 缩放 / 最小化，夹具在 `tests/fixtures/win/`）。
 > - 未验证：自带的 `wbcu-guitests.exe` 尚未跑绿，因此 `capabilities` 中相关项仍是 `not_tested`。
 >
@@ -107,7 +107,7 @@ powershell -ExecutionPolicy Bypass -File src-windows\build.ps1
 
 ```bash
 ./scripts/pack-windows.sh win-x64
-# → dist/wbcu-windows-win-x64-0.6.2.zip
+# → dist/wbcu-windows-win-x64-0.6.5.zip
 ```
 
 实测（2026-11-16，macOS 26.6 arm64，SDK 8.0.428）：
@@ -148,7 +148,7 @@ powershell -ExecutionPolicy Bypass -File dist\win-x64\install.ps1 -Source dist\w
 ## 4. 安装后自检
 
 ```powershell
-wbcu.exe version            # 应输出 0.6.2（该发布包的程序集版本）
+wbcu.exe version            # 应输出 0.6.5（该发布包的程序集版本）
 wbcu.exe doctor             # 逐项体检：版本一致性 / 状态目录 / UIA / 捕获 / trace / GUI 验收状态
 wbcu.exe selftest --json    # 纯逻辑自检（不需要桌面）
 wbcu.exe capabilities --json # 能力矩阵（未实机验证项会显示 not_tested）
@@ -213,8 +213,8 @@ powershell -ExecutionPolicy Bypass -File uninstall.ps1 -PurgeState  # 连经验�
 - **0.6.0 有个坑：不带 `--no-ghost` 会挂起**（守护进程继承 stdout）。0.6.1 已修，不再需要该参数。
 - **GitHub Release 直连不通时的正确做法**：镜像取包 + `WBCU_LOCAL_ZIP` 注入，sha256 不被跳过。
   ```powershell
-  $env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.2.zip"
-  npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/workbuddy-third-hand-0.6.3.tgz
+  $env:WBCU_LOCAL_ZIP = "D:\wbcu-windows-win-x64-0.6.5.zip"
+  npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/workbuddy-third-hand-0.6.5.tgz
   ```
 - **运行时依赖分两层**：引擎只要 `Microsoft.NETCore.App` 8；`testapps\`（WPF 靶子 + 验收套件）
   还需要 `Microsoft.WindowsDesktop.App` 8。只想跑引擎可以不装 Desktop。

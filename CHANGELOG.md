@@ -59,14 +59,24 @@ Worker 代码与能力全部保留，问题已记录待修。
 - `occlusion_matrix.py` —— 七场景遮挡矩阵，用「同场景两次 PNG 是否相同」判定实时性
 - `frame_identity_test.py` —— 帧身份/新鲜度验证
 
-### 未完成
+### 已完成（本轮回填，附证据位置）
 
-- Session 自动重绑定（仍缺）
-- App Experience Memory 扩展（Calculator/Notepad 经验积累未做）
-- `install.ps1` 版本同步（`doctor` 仍报 skill/engine 版本不一致）
-- Worker 管道竞态根因修复
-- 100 次采样 P50/P95 性能报告
-- 企业微信 A/B/C/D（本轮企业微信未运行）
+- **捕获与遮挡矩阵真机验收**：七场景全部通过，夹具与判定方法在 `tests/fixtures/win/`
+  （`capture_fixture.py` 目标窗口每 300ms 计数器+1 换色、`occluder.py` 可控遮挡窗、
+  `occlusion_matrix.py` 用「同场景两次 PNG 是否相同」判定实时性）。
+- **帧身份与新鲜度**：`frame_identity_test.py` 实测 `hwnd=0x9012B8`、`frameAge=15–16ms`、
+  `generation=1`、`stale=false`；PrintWindow 路径强制 `isStale=true`。
+
+### 未完成（如实保留；仓库内暂无对应回执或报告）
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| Session 自动重绑定 | 未做 | 目标重启仍需重新 `attach` |
+| App Experience Memory 扩展 | 未做 | Calculator / Notepad 尚未积累经验条目 |
+| Worker 管道竞态根因 | 未修 | 已用 opt-in（`--use-worker`）规避主路径风险；复现入口：`wbcuf ping` 连发 + `occlusion_matrix.py` |
+| 100 次采样 P50/P95 报告 | 未做 | 仓库内无该报告；产出方式：`wbcu perf stats` 累积 ≥100 条后导出，勿用估算值填充 |
+| 企业微信 A/B/C/D 验收 | 未执行 | 该轮客户端处于扫码登录态；无回执 |
+| `install.ps1` 版本同步 | 已知 | 引擎版本与 npm 包版本可不同步；正确解法是按契约 `schemaVersion` 判兼容，而非字符串相等（见 Roadmap） |
 
 ## [0.6.4] — 2026-11-19
 

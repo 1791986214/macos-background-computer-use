@@ -21,7 +21,8 @@ entries = re.findall(r"file:\s*'([^']+)',\s*\n\s*sha256:\s*'([0-9a-f]{64})'", pl
 if not entries:
     print("FAIL: platform.js 里没解析到 (file, sha256) 对"); sys.exit(1)
 
-doc_hash = re.search(r"当前包 SHA256：`([0-9a-f]{64})`", doc)
+doc_hash = (re.search(r'\$expect\s*=\s*"([0-9a-f]{64})"', doc)
+            or re.search(r"当前包 SHA256：`([0-9a-f]{64})`", doc))
 fail = 0
 for fname, h in entries:
     print(f"platform.js  {fname}: {h}")

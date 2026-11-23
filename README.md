@@ -78,7 +78,8 @@ Continuous learning.</sub>
   - 常驻 Worker 经 Named Pipe（`CurrentUserOnly`）复用 WGC 会话与帧池；轻量客户端 `wbcuf` 只做参数解析 + IPC + JSON，冷启动从 788–819 ms 降到 293–341 ms（IPC 8 ms），Worker 不在时退出码 2、自动回退 `wbcu`。
   - 每张截图都带帧身份（`targetHwnd` / `frameId` / `frameAgeMs` / `isStale` 等），PrintWindow 兜底会强制标记 `isStale`。
 - **实验性** —— Ghost Cursor。渲染与窗口属性已核对，DWM 合成观感待验收。
-- **规划中** —— 原生运行时客户端（NativeAOT / C++：本机缺 MSVC 与 clang，暂不可行；余下 ~300 ms 全是 .NET 初始化）、经验库扩展、目标窗口自动重绑定。
+- **备选方案（暂不可行）** —— NativeAOT / C++ 客户端：当前环境缺 MSVC 与 clang，无法产出二进制；且余下 ~300 ms 几乎全是 .NET runtime 初始化，换原生运行时才有意义。
+- **规划中** —— 经验库扩展、目标窗口自动重绑定。
 
 细节见 [Windows 架构](docs/windows-architecture.md) 与 [Windows 能力矩阵](docs/windows-capability-matrix.md)。
 
@@ -106,6 +107,14 @@ macOS 侧不拆分轻量客户端与常驻进程：引擎随命令启动，覆�
 <div align="center">
 <sub>一条命令装好引擎与 WorkBuddy 技能</sub>
 </div>
+
+| 项目 | 版本 | 说明 |
+|---|---|---|
+| 可下载的预发布包 | `v0.6.2-rc1`（引擎 0.6.2） | 下面的 npm / PowerShell 命令装的就是它 |
+| npm 安装包 | `workbuddy-third-hand@0.6.3` | 只修了代理下载，内含引擎仍是 0.6.2 |
+| 源码 / 真机验收版本 | `v0.6.5` | 含 `wbcuf`、帧身份、Worker opt-in；**尚未打包为发布资产** |
+
+`wbcu version` 显示引擎版本，与 npm 包版本不必然相同 —— 这两个号不用对齐。
 
 **npm（Windows / macOS，需 Node 18+）**
 
@@ -180,7 +189,7 @@ wbcu session end --id <sid>
 | 方向 | 状态 | 说明 |
 |---|---|---|
 | Windows GUI 验收套件跑绿 | 进行中 | 套件已就绪，需交互式桌面；全绿后才把 `not_tested` 升级为 `supported` |
-| 原生运行时客户端（NativeAOT / C++） | 规划中 | `wbcuf` 已把冷启动压到 ~300 ms，剩余开销全是 .NET 初始化；本机缺编译工具链 |
+| 原生运行时客户端（NativeAOT / C++） | 备选 | 已实现的 .NET 方案把冷启动压到 ~300 ms；本机缺 MSVC/clang，暂不推进 |
 | 经验库扩展 | 规划中 | 跨版本迁移、失败样本回收、按应用版本淘汰 |
 | 目标窗口自动重绑定 | 规划中 | 目标重启或换窗口后自动接续会话，而不是报 `session_stale` |
 | npm registry 正式发布 | 待授权 | 包已构建并校验，待 npm 账号授权后推送 |

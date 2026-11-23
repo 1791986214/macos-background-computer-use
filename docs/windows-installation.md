@@ -1,7 +1,17 @@
-# Windows 安装与验证（v0.6.0）
+# Windows 安装与验证
 
+## 0. 安装
 
-## 0. 最快路径
+### 0.0 先看清版本（三个 0.6.x 不是同一个东西）
+
+| 你要的东西 | 版本 | 里面是什么 |
+|---|---|---|
+| **可下载的预发布包** | `v0.6.2-rc1`（引擎 0.6.2） | 发布页资产，本文件的校验值对应它 |
+| **npm 安装包** | `workbuddy-third-hand@0.6.3`（内含引擎 0.6.2） | 0.6.3 只修了下载器（代理/镜像），引擎没变 |
+| **源码 / 真机验收版本** | `v0.6.5` | 含 `wbcuf`、帧身份、Worker opt-in；**尚未打包为发布资产** |
+
+`wbcu.exe version` 显示的是**引擎**版本，与 npm 包版本不必然相同。
+
 
 ### 0.1 npm（已装 Node 18+ 时最省事）
 
@@ -35,23 +45,39 @@ powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/m
 它会依次做：下载发布包 → 校验大小并打印 SHA256 → 解压到 `%TEMP%\wbcu-setup`
 → 调用 `install.ps1`（装引擎 + 装技能 + 冒烟测试）→ 打印下一步命令。
 
-不想执行远程脚本时，手动两步等价：
+### 0.3 手动安装：下载 → 校验 → 解压 → 安装（顺序不能反）
 
 ```powershell
-$u = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/wbcu-windows-win-x64-0.6.2.zip"
-Invoke-WebRequest $u -OutFile wbcu.zip -UseBasicParsing
-Expand-Archive wbcu.zip -DestinationPath wbcu -Force
+$u      = "https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.2-rc1/wbcu-windows-win-x64-0.6.2.zip"
+$expect = "3ec08e0e5f7f866db873274f421eaa530db2921a0adb07618bb5e1c3aaadffe3"
+$zip    = "wbcu.zip"
+
+# 1) 下载
+Invoke-WebRequest $u -OutFile $zip -UseBasicParsing
+
+# 2) 校验：不一致就停在这里，绝不继续解压
+$actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+if ($actual -ne $expect) {
+    throw "SHA256 不匹配：期望 $expect，实得 $actual。文件可能不完整或被替换，删掉重下。"
+}
+
+# 3) 校验通过后再解压
+Expand-Archive $zip -DestinationPath wbcu -Force
+
+# 4) 安装（装引擎 + 装技能 + 冒烟测试）
 powershell -ExecutionPolicy Bypass -File wbcu\install.ps1 -Source wbcu
 ```
 
-当前包 SHA256：`3ec08e0e5f7f866db873274f421eaa530db2921a0adb07618bb5e1c3aaadffe3`
-（`Get-FileHash wbcu.zip -Algorithm SHA256` 自行核对）。
+`$expect` 必须与 `npm/lib/platform.js` 里登记的 `sha256` 一致。
+两者若不一致，以发布页和 `platform.js` 为准，并跑 `./scripts/check-release-hashes.sh` 定位漂移。
 
-> 这一段的值必须与 `npm/lib/platform.js` 里登记的 `sha256` 一致；
-> 不一致时以发布页与 `platform.js` 为准，并跑 `./scripts/check-release-hashes.sh` 定位漂移。
-
-> ⚠️ `v0.6.2-rc1` 是**预发布**：编译、单测、契约一致性已验证，**真机 GUI 验收未做**。
-> 装完先跑第 4 节自检；要宣称「能用」必须跑第 5 节。
+> ⚠️ `v0.6.2-rc1` 是**预发布**，已验证与未验证要分清：
+>
+> - 已验证：编译、单测 65/65、契约一致性；**捕获与遮挡矩阵已在 Windows 10 19045 真机验收**
+>   （完全可见 / 部分遮挡 / 四周外扩完全遮挡 / 切前台 / 移动 / 缩放 / 最小化，夹具在 `tests/fixtures/win/`）。
+> - 未验证：自带的 `wbcu-guitests.exe` 尚未跑绿，因此 `capabilities` 中相关项仍是 `not_tested`。
+>
+> 装完先跑第 4 节自检；要宣称「全部能力可用」必须跑第 5 节。
 
 ## 1. 环境要求
 
@@ -122,12 +148,15 @@ powershell -ExecutionPolicy Bypass -File dist\win-x64\install.ps1 -Source dist\w
 ## 4. 安装后自检
 
 ```powershell
-wbcu.exe version            # 应输出 0.6.0
+wbcu.exe version            # 应输出 0.6.2（该发布包的程序集版本）
 wbcu.exe doctor             # 逐项体检：版本一致性 / 状态目录 / UIA / 捕获 / trace / GUI 验收状态
 wbcu.exe selftest --json    # 纯逻辑自检（不需要桌面）
 wbcu.exe capabilities --json # 能力矩阵（未实机验证项会显示 not_tested）
 wbcu.exe contract --json    # 跨平台契约
 ```
+
+> 若这里显示 `0.6.0`，说明程序集版本读取失败、落到了兜底值（`Capabilities.Version` 的默认值），
+> 不代表这个包真的是 0.6.0 —— 先跑 `wbcu.exe doctor` 看 `engine_version` 与 `engine_path` 是否正常。
 
 `doctor` 里两项值得注意：
 

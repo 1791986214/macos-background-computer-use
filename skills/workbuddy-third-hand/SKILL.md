@@ -1,6 +1,6 @@
 ---
 name: workbuddy-third-hand
-version: 0.6.5
+version: 0.6.6
 description: WorkBuddy Third Hand —— 给 WorkBuddy 的第三只手，macOS 与 Windows 双平台。用各自平台的原生技术（macOS：ScreenCaptureKit + Accessibility + 进程级事件投递；Windows：Windows.Graphics.Capture + UI Automation + 定向窗口消息）在后台操作指定应用，优先不抢占用户真实鼠标、不切换前台、不抢键盘焦点，并且每次操作都读值验证。当用户要求「帮我操作另一个应用」「在后台完成桌面任务」「不要影响我正在用的鼠标」「读一下另一个应用里的信息」「点一下那个按钮」「同时在两个应用里干活」「用虚拟鼠标操作某个窗口」，或需要在计算器 / 记事本 / 文件资源管理器 / Finder / 文本编辑 / Electron 应用里做自动化时使用。
 agent_created: true
 ---
@@ -204,14 +204,14 @@ wbcu.exe session end --id $sid
 
 ### 工具选择规则（必须遵守）
 
-**已经建立 Third Hand 目标窗口会话时，针对该窗口的一切视觉观察，一律用绑定 HWND 的截屏命令：Windows 是 `wbcu.exe capture`，macOS 是 `wbcu session capture` / `wbcu shot`。**
+**已经建立 Third Hand 目标窗口会话时，针对该窗口的一切视觉观察，一律用绑定 HWND 的 `wbcu capture`。**
 
 - 不得为了绕过捕获异常，自行改用桌面截图、屏幕区域截图或前台应用截图，再当成目标窗口画面。
   这类替代品抓的是"屏幕上最上层的像素"，用户一切窗口就会截到别的软件。
 - 允许 WorkBuddy 在**其他独立任务**中继续使用自己的截图工具（浏览器、普通文件处理等），不需要禁用。
 - 这是**工具选择规则**，不是全局工具拦截机制 —— 不做工具路由门禁。
 
-判断依据很简单：要看的画面属于某个已 attach 的窗口，就走 `wbcu.exe capture`（Windows）/ `wbcu session capture`（macOS）；
+判断依据很简单：要看的画面属于某个已 attach 的窗口，就走 `wbcu capture`；
 不属于任何目标窗口（比如看整个桌面布局），才用自己的截图。
 
 ### 常驻 Worker（v0.6.4）

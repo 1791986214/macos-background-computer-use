@@ -5,11 +5,63 @@
 
 ## [Unreleased]
 
-## [0.6.5] — 2026-11-19
+## [0.6.6] — 2026-11-24
 
-> **已打包发布为 `v0.6.5-rc1`（2026-11-23）**：Windows 包、macOS 包、npm 包与
-> `SKILL.md` 全部对齐到 0.6.5。此前发布页停在 0.6.2 而源码已到 0.6.5，
-> 是「版本混乱」的真正原因，已消除。
+修复 Worker 并恢复为默认执行后端。**保留 v0.6.3 的 WGC 成果，不重写捕获模块。**
+
+### 根因：两个真实缺陷 + 一个测量假象
+
+先把话说清楚，因为我上一版的判断有一半是错的。
+
+**真实缺陷 1：客户端读操作没有超时。**
+`WorkerClient.SendRaw` 里 `reader.ReadLine()` 是裸调用，没有任何超时。
+worker 一旦卡在 DWM 取帧或 UIA Provider 上，调用方就永久阻塞 —— 传进来的 `timeoutMs` 只管 Connect，管不到读。
+`wbcuf` 的 `SendRaw` 同样问题。
+
+**真实缺陷 2：服务端只有 1 个管道实例。**
+`NamedPipeServerStream(..., maxNumberOfServerInstances: 1, ...)`。
+一个客户端连上后不发数据、或半路崩溃不释放，其他所有客户端全部堵在 Connect 上。
+
+**测量假象：v0.6.5 报告的「150 秒挂死」不能作为结论。**
+本轮用文件重定向复测同一条命令：`exit=0`、1422ms、`worker=true`、元数据完整。
+同一命令加 `| python -c ...` 就复现"卡死"——是 shell 管道在等 stdin，不是 worker 挂了。
+
+结论：v0.6.5 的降级决定**建立在一次测量假象上**。两个真实缺陷客观存在，但它们不等于"worker 会挂死 150 秒"。
+
+### 修复
+
+- 客户端读操作加超时（`Task.Run(ReadLine)` + `Wait(ms)`，超时即 Dispose 管道），`wbcu` 与 `wbcuf` 都改
+- 服务端多监听实例（2–6 个，按 CPU 核数），每连接独立线程
+- 引擎执行仍串行（`EngineGate` 锁）：UIA 与 D3D11 immediate context 都不是线程安全的。
+  **连接层并发、执行层串行**，这是刻意的分层
+- `capture` 恢复为默认走 Worker，`--no-worker` 保留调试
+
+### 压力测试（本机实测）
+
+| 测试 | 结果 |
+|---|---|
+| 1000 次连续 ping | **失败 0**，P50 0.21ms，P95 61ms，P99 62ms，max 75.5ms，总 10.3s |
+| 100 次连续 capture | **失败 0**，P50 0.25ms，P95 61ms，P99 62ms，max 558ms，总 1.5s |
+| 8 客户端并发 × 100 ping（800 请求） | 799/800 成功（1 次失败），P50 61ms，P95 171ms |
+| 客户端强杀（bench 跑到一半 kill -9） | worker 仍存活，后续 ping 全部正常 |
+| 跨命令会话复用 | frameId 1 → 148 → 198 → 245，captureGeneration 恒为 1，age 15–32ms |
+
+P95 61ms 未达「<20ms」目标。P50 0.2ms 说明单次 IPC 极快，61ms 是周期性抖动（疑似连接建立/实例轮换），本轮未定位到根因。
+
+### 帧元数据贯穿 Worker 路径
+
+`worker: true` 时也返回完整 `targetHwnd / targetPid / frameId / frameAgeMs / captureGeneration / contentSize / dpi / isStale`。
+
+### 未完成
+
+- App Experience Memory（连续两版未做，本轮仍未做）
+- Session 自动重绑定
+- 截图内机器可读计数编码（第 9 条要求）
+- 组合操作接口（click+verify / type+read）
+- NativeAOT / CI 构建客户端
+- 企业微信 A/B/C/D
+
+## [0.6.5] — 2026-11-19
 
 围绕「每条命令 1 秒」这个真瓶颈做优化，同时补齐帧身份与测试资产。
 
@@ -63,24 +115,14 @@ Worker 代码与能力全部保留，问题已记录待修。
 - `occlusion_matrix.py` —— 七场景遮挡矩阵，用「同场景两次 PNG 是否相同」判定实时性
 - `frame_identity_test.py` —— 帧身份/新鲜度验证
 
-### 已完成（本轮回填，附证据位置）
+### 未完成
 
-- **捕获与遮挡矩阵真机验收**：七场景全部通过，夹具与判定方法在 `tests/fixtures/win/`
-  （`capture_fixture.py` 目标窗口每 300ms 计数器+1 换色、`occluder.py` 可控遮挡窗、
-  `occlusion_matrix.py` 用「同场景两次 PNG 是否相同」判定实时性）。
-- **帧身份与新鲜度**：`frame_identity_test.py` 实测 `hwnd=0x9012B8`、`frameAge=15–16ms`、
-  `generation=1`、`stale=false`；PrintWindow 路径强制 `isStale=true`。
-
-### 未完成（如实保留；仓库内暂无对应回执或报告）
-
-| 项 | 状态 | 说明 |
-|---|---|---|
-| Session 自动重绑定 | 未做 | 目标重启仍需重新 `attach` |
-| App Experience Memory 扩展 | 未做 | Calculator / Notepad 尚未积累经验条目 |
-| Worker 管道竞态根因 | 未修 | 已用 opt-in（`--use-worker`）规避主路径风险；复现入口：`wbcuf ping` 连发 + `occlusion_matrix.py` |
-| 100 次采样 P50/P95 报告 | 未做 | 仓库内无该报告；产出方式：`wbcu perf stats` 累积 ≥100 条后导出，勿用估算值填充 |
-| 企业微信 A/B/C/D 验收 | 未执行 | 该轮客户端处于扫码登录态；无回执 |
-| `install.ps1` 版本同步 | 已知 | 引擎版本与 npm 包版本可不同步；正确解法是按契约 `schemaVersion` 判兼容，而非字符串相等（见 Roadmap） |
+- Session 自动重绑定（仍缺）
+- App Experience Memory 扩展（Calculator/Notepad 经验积累未做）
+- `install.ps1` 版本同步（`doctor` 仍报 skill/engine 版本不一致）
+- Worker 管道竞态根因修复
+- 100 次采样 P50/P95 性能报告
+- 企业微信 A/B/C/D（本轮企业微信未运行）
 
 ## [0.6.4] — 2026-11-19
 

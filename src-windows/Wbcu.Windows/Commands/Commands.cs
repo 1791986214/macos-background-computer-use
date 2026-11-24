@@ -405,10 +405,9 @@ public static class Commands
 
         // ① 优先走常驻 Worker：跨命令复用同一个 WGC 会话，省掉 .NET 冷启动（实测 750–1180ms）
         //    与帧池重建。连不上就静默回落本地，绝不阻塞。
-        // Worker 改为 opt-in：v0.6.5 验证中发现激活 Worker 的路径在部分情况下会拖住命令
-        // （worker 侧管道重建与 CLI 连接竞态），为保证 capture 永远不挂，默认走本地稳定路径。
-        // 需要加速时显式 --use-worker；Worker 能力与代码全部保留。
-        if (ctx.Args.Flag("use-worker") && !ctx.Args.Flag("no-worker"))
+        // v0.6.6：Worker 恢复为默认执行后端。
+        // 两个挂死成因已修：客户端读操作带超时（不再永久阻塞）、服务端多监听实例（不再单点堵死）。
+        if (!ctx.Args.Flag("no-worker"))
         {
             if (WorkerClient.Ensure(120))
             {
@@ -423,6 +422,15 @@ public static class Commands
                         .With("height", wr.Height)
                         .With("captureMs", Math.Round(sw.Elapsed.TotalMilliseconds, 2))
                         .With("worker", true)
+                        .With("targetHwnd", wr.TargetHwnd)
+                        .With("targetPid", wr.TargetPid)
+                        .With("frameId", wr.FrameId)
+                        .With("frameTimestamp", wr.FrameTimestamp)
+                        .With("frameAgeMs", wr.FrameAgeMs)
+                        .With("captureGeneration", wr.CaptureGeneration)
+                        .With("contentSize", wr.ContentSize)
+                        .With("dpi", wr.Dpi)
+                        .With("isStale", wr.IsStale)
                         .With("session", rec?.Id)
                         .With("window", win.ToJson());
                     foreach (var w in wr.Warnings) wenv.Warn(w);

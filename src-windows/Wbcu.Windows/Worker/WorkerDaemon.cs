@@ -36,74 +36,116 @@ public static class WorkerDaemon
         }
         catch { }
 
-        var handles = 0;
+        // 多个监听实例：一个客户端卡住（连上却不发数据、或半路崩溃）不能堵死其他人。
+        // 旧版 maxNumberOfServerInstances=1，是 v0.6.5 挂死的第二个成因。
+        var listeners = Math.Clamp(Environment.ProcessorCount, 2, 6);
+        Log(pipeName, $"start pid={Environment.ProcessId} listeners={listeners}");
 
-        try
+        for (var i = 0; i < listeners; i++)
         {
-            while (!ct.IsCancellationRequested)
+            var slot = i;
+            var t = new Thread(() => ListenLoop(pipeName, ct, listeners))
             {
-                NamedPipeServerStream? server = null;
-                try
-                {
-                    server = new NamedPipeServerStream(
-                        pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                        PipeOptions.CurrentUserOnly);
-
-                    // 同步等待：异步 Wait(500) 会不断新建 Task，而且取消语义在这里没有价值——
-                    // 关闭走 shutdown 命令，直接 return。
-                    server.WaitForConnection();
-
-                    using var reader = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
-                    using var writer = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
-
-                    string? line;
-                    while ((line = reader.ReadLine()) != null)
-                    {
-                        if (string.IsNullOrWhiteSpace(line)) continue;
-                        handles++;
-
-                        Dictionary<string, object?> reply;
-                        try
-                        {
-                            using var doc = JsonDocument.Parse(line);
-                            reply = Dispatch(doc.RootElement);
-                        }
-                        catch (Exception ex)
-                        {
-                            reply = new Dictionary<string, object?>
-                            {
-                                ["ok"] = false,
-                                ["errorCode"] = "worker_dispatch_failed",
-                                ["failureReason"] = ex.GetType().Name + ": " + ex.Message,
-                            };
-                        }
-
-                        writer.WriteLine(JsonSerializer.Serialize(reply));
-
-                        if (reply.TryGetValue("_shutdown", out var sd) && sd is true) return 0;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log(pipeName, "loop: " + ex.GetType().Name + ": " + ex.Message);
-                    Thread.Sleep(50);
-                }
-                finally
-                {
-                    try { server?.Dispose(); } catch { }
-                }
-            }
-        }
-        finally
-        {
-            try { File.Delete(pidFile); } catch { }
-            // 进程退出前把捕获会话干净释放，避免 DWM 侧残留
-            try { LiveCaptureRegistry.DropAll(); } catch { }
+                IsBackground = true,
+                Name = $"wbcu-worker-{slot}",
+            };
+            t.Start();
         }
 
-        _ = handles;
+        // 主线程只负责等待退出信号
+        ct.WaitHandle.WaitOne();
+
+        try { File.Delete(pidFile); } catch { }
+        try { LiveCaptureRegistry.DropAll(); } catch { }
+        Log(pipeName, "stopped");
         return 0;
     }
+
+    /// <summary>单个监听槽：等连接 → 服务 → 断开后立刻重新等。</summary>
+    private static void ListenLoop(string pipeName, CancellationToken ct, int maxInstances)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            NamedPipeServerStream? server = null;
+            try
+            {
+                server = new NamedPipeServerStream(
+                    pipeName, PipeDirection.InOut, maxInstances,
+                    PipeTransmissionMode.Byte, PipeOptions.CurrentUserOnly);
+
+                server.WaitForConnection();
+                ServeConnection(server, pipeName);
+            }
+            catch (Exception ex)
+            {
+                if (ct.IsCancellationRequested) break;
+                Log(pipeName, "listener: " + ex.GetType().Name + ": " + ex.Message);
+                Thread.Sleep(50);
+            }
+            finally
+            {
+                try { server?.Dispose(); } catch { }
+            }
+        }
+    }
+
+    /// <summary>处理一条连接上的多条请求。</summary>
+    private static void ServeConnection(NamedPipeServerStream server, string pipeName)
+    {
+        using var reader = new StreamReader(server, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+        using var writer = new StreamWriter(server, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+
+        string? line;
+        while ((line = reader.ReadLine()) != null)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            Dictionary<string, object?> reply;
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var op = doc.RootElement.TryGetProperty("op", out var o) ? o.GetString() ?? "" : "";
+
+                if (op == "shutdown")
+                {
+                    writer.WriteLine(JsonSerializer.Serialize(new Dictionary<string, object?> { ["ok"] = true }));
+                    Log(pipeName, "shutdown requested");
+                    try { LiveCaptureRegistry.DropAll(); } catch { }
+                    Environment.Exit(0);
+                    return;
+                }
+
+                // 引擎执行串行：UIA 与 D3D11 immediate context 都不是线程安全的。
+                // 连接层并发（不互相堵），执行层串行（保证正确），这是刻意的分层。
+                lock (EngineGate)
+                {
+                    reply = Dispatch(doc.RootElement);
+                }
+            }
+            catch (Exception ex)
+            {
+                reply = new Dictionary<string, object?>
+                {
+                    ["ok"] = false,
+                    ["errorCode"] = "worker_dispatch_failed",
+                    ["failureReason"] = ex.GetType().Name + ": " + ex.Message,
+                };
+            }
+
+            try
+            {
+                writer.WriteLine(JsonSerializer.Serialize(reply));
+            }
+            catch (Exception ex)
+            {
+                Log(pipeName, "write: " + ex.GetType().Name + ": " + ex.Message);
+                return;
+            }
+        }
+    }
+
+    /// <summary>引擎串行闸门：保证同一时刻只有一个请求在跑 WGC / UIA。</summary>
+    private static readonly object EngineGate = new();
 
     private static void Log(string pipeName, string msg)
     {

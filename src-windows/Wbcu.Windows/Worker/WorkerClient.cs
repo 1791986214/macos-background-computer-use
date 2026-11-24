@@ -5,7 +5,11 @@ using System.Text.Json;
 
 namespace Wbcu.Windows.Worker;
 
-public sealed record WorkerCapture(bool Ok, string Method, int Width, int Height, string? Failure, string[] Warnings);
+public sealed record WorkerCapture(
+    bool Ok, string Method, int Width, int Height, string? Failure, string[] Warnings,
+    string? TargetHwnd = null, int TargetPid = 0, long FrameId = 0,
+    string? FrameTimestamp = null, long FrameAgeMs = 0, long CaptureGeneration = 0,
+    string? ContentSize = null, int Dpi = 96, bool IsStale = false);
 
 /// <summary>
 /// CLI 侧的 Worker 客户端。
@@ -114,7 +118,26 @@ public static class WorkerClient
                 }
             }
 
-            return new WorkerCapture(ok, method, w, h, failure, warnings.ToArray());
+            string? Str(string name) =>
+                data.ValueKind == JsonValueKind.Object && data.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.String
+                    ? e.GetString() : null;
+            long Num(string name) =>
+                data.ValueKind == JsonValueKind.Object && data.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.Number
+                    ? (e.TryGetInt64(out var l) ? l : (long)e.GetDouble()) : 0;
+            bool Bool(string name) =>
+                data.ValueKind == JsonValueKind.Object && data.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.True;
+
+            return new WorkerCapture(
+                ok, method, w, h, failure, warnings.ToArray(),
+                TargetHwnd: Str("targetHwnd"),
+                TargetPid: (int)Num("targetPid"),
+                FrameId: Num("frameId"),
+                FrameTimestamp: Str("frameTimestamp"),
+                FrameAgeMs: Num("frameAgeMs"),
+                CaptureGeneration: Num("captureGeneration"),
+                ContentSize: Str("contentSize"),
+                Dpi: (int)(Num("dpi") is 0 ? 96 : Num("dpi")),
+                IsStale: Bool("isStale"));
         }
         finally
         {
@@ -128,19 +151,33 @@ public static class WorkerClient
         return reply != null;
     }
 
-    /// <summary>发一条命令，拿到 JSON 后由调用方 Dispose。连不上返回 null。</summary>
-    private static JsonDocument? SendRaw(object op, int timeoutMs)
+    /// <summary>发一条命令，拿到 JSON 后由调用方 Dispose。连不上或超时返回 null。</summary>
+    private static JsonDocument? SendRaw(object op, int timeoutMs, int readTimeoutMs = 3000)
     {
+        NamedPipeClientStream? pipe = null;
         try
         {
-            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None);
+            pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None);
             pipe.Connect(timeoutMs);
 
-            using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
-            using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+            var writer = new StreamWriter(pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+            var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
 
             writer.WriteLine(JsonSerializer.Serialize(op));
-            var line = reader.ReadLine();
+
+            // 读必须带超时。
+            // v0.6.5 的 150 秒挂死就是这里：ReadLine() 没有超时，worker 一旦卡在
+            // DWM 取帧或 UIA Provider 上，调用方就永久阻塞，超时参数形同虚设。
+            // 现在读放到独立任务里，超时即放弃并 Dispose 管道（后台读会因管道关闭而抛错退出）。
+            var readTask = Task.Run(() =>
+            {
+                try { return reader.ReadLine(); }
+                catch { return null; }
+            });
+
+            if (!readTask.Wait(readTimeoutMs)) return null;
+
+            var line = readTask.Result;
             if (string.IsNullOrWhiteSpace(line)) return null;
 
             return JsonDocument.Parse(line);
@@ -148,6 +185,10 @@ public static class WorkerClient
         catch
         {
             return null;
+        }
+        finally
+        {
+            try { pipe?.Dispose(); } catch { }
         }
     }
 }

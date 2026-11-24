@@ -47,6 +47,7 @@ public static class Program
                 "ping" => Send(new { op = "ping" }, opt),
                 "status" => Send(new { op = "status" }, opt),
                 "capture" => Capture(opt, t0),
+                "bench" => Bench(opt),
                 _ => Error("unknown_command", $"未知命令：{cmd}"),
             };
         }
@@ -54,6 +55,80 @@ public static class Program
         {
             return Error("client_error", ex.GetType().Name + ": " + ex.Message);
         }
+    }
+
+    /// <summary>
+    /// 压力测试：进程内循环连管道，测的是**纯 IPC 往返**（不含进程启动）。
+    ///   wbcuf bench --n 1000 --op ping
+    ///   wbcuf bench --n 100 --op capture --id s2611xxxx
+    /// 输出 P50 / P95 / P99 / 最大 / 失败率。
+    /// </summary>
+    private static int Bench(Dictionary<string, string> opt)
+    {
+        var n = int.TryParse(opt.GetValueOrDefault("n", "1000"), out var v) ? v : 1000;
+        var opName = opt.GetValueOrDefault("op", "ping") ?? "ping";
+        opt.TryGetValue("id", out var sid);
+        opt.TryGetValue("hwnd", out var hwnd);
+
+        string? targetHwnd = hwnd;
+        if (string.IsNullOrEmpty(targetHwnd) && !string.IsNullOrEmpty(sid))
+            targetHwnd = ResolveHwndFromSession(sid!);
+
+        var times = new List<double>(n);
+        var fails = 0;
+        var swAll = Stopwatch.StartNew();
+
+        for (var i = 0; i < n; i++)
+        {
+            object payload = opName switch
+            {
+                "capture" => new { op = "capture", hwnd = targetHwnd },
+                "status" => new { op = "status" },
+                _ => new { op = "ping" },
+            };
+
+            var t = Stopwatch.GetTimestamp();
+            var reply = SendRaw(payload, 300, 8000);
+            var ms = Elapsed(t);
+
+            if (reply == null) fails++;
+            else reply.Dispose();
+
+            times.Add(ms);
+        }
+
+        swAll.Stop();
+        times.Sort();
+
+        double Pct(double p)
+        {
+            if (times.Count == 0) return 0;
+            var idx = (int)Math.Ceiling(p / 100.0 * times.Count) - 1;
+            return times[Math.Clamp(idx, 0, times.Count - 1)];
+        }
+
+        var result = new Dictionary<string, object?>
+        {
+            ["ok"] = fails == 0,
+            ["data"] = new Dictionary<string, object?>
+            {
+                ["op"] = opName,
+                ["n"] = n,
+                ["fail"] = fails,
+                ["failRate"] = Math.Round(fails * 100.0 / Math.Max(1, n), 2) + "%",
+                ["p50"] = Math.Round(Pct(50), 2),
+                ["p95"] = Math.Round(Pct(95), 2),
+                ["p99"] = Math.Round(Pct(99), 2),
+                ["max"] = Math.Round(times.Count > 0 ? times[^1] : 0, 2),
+                ["min"] = Math.Round(times.Count > 0 ? times[0] : 0, 2),
+                ["avg"] = Math.Round(times.Count > 0 ? times.Average() : 0, 2),
+                ["wallMs"] = Math.Round(swAll.Elapsed.TotalMilliseconds, 1),
+                ["pipe"] = PipeName,
+            },
+        };
+
+        Console.WriteLine(JsonSerializer.Serialize(result));
+        return fails == 0 ? 0 : 1;
     }
 
     private static int Capture(Dictionary<string, string> opt, long t0)
@@ -153,23 +228,38 @@ public static class Program
     private static double Elapsed(long t0) =>
         (Stopwatch.GetTimestamp() - t0) * 1000.0 / Stopwatch.Frequency;
 
-    private static JsonDocument? SendRaw(object payload, int timeoutMs)
+    private static JsonDocument? SendRaw(object payload, int timeoutMs, int readTimeoutMs = 5000)
     {
+        NamedPipeClientStream? pipe = null;
         try
         {
-            using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None);
+            pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.None);
             pipe.Connect(timeoutMs);
 
-            using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
-            using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
+            var writer = new StreamWriter(pipe, new UTF8Encoding(false), 8192, leaveOpen: true) { AutoFlush = true };
+            var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 8192, leaveOpen: true);
 
             writer.WriteLine(JsonSerializer.Serialize(payload));
-            var line = reader.ReadLine();
+
+            // 读带超时：worker 卡死时不能把调用方一起拖住（v0.6.5 的 150 秒挂死就是这里）
+            var readTask = Task.Run(() =>
+            {
+                try { return reader.ReadLine(); }
+                catch { return null; }
+            });
+
+            if (!readTask.Wait(readTimeoutMs)) return null;
+
+            var line = readTask.Result;
             return string.IsNullOrWhiteSpace(line) ? null : JsonDocument.Parse(line);
         }
         catch
         {
             return null;
+        }
+        finally
+        {
+            try { pipe?.Dispose(); } catch { }
         }
     }
 

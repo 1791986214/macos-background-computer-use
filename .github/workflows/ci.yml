@@ -36,6 +36,11 @@ jobs:
       - name: 单元测试（纯逻辑，无需 TCC 授权）
         run: ./tests/run-all.sh unit
 
+      - name: 技能与引擎一致性（doctor 必须为「一致」）
+        # 共享 SKILL.md 里写错平台命令（例如 macOS 没有顶层 capture）会在这里红，
+        # 避免每轮同步都要靠人肉发现。
+        run: ./bin/wbcu doctor
+
       - name: 发布哈希一致性（文档 vs npm 登记）
         # 手写的 SHA256 一定会腐烂：v0.6.2 的安装文档曾挂着 v0.6.0 的哈希。
         run: ./scripts/check-release-hashes.sh

@@ -843,7 +843,13 @@ private func sessionEnd(_ args: Args) {
         for s in list { try? FileManager.default.removeItem(at: sessionPath(s.id)) }
         ghostHide()
         if gJSONMode { emit(["ok": true, "ended": list.map { $0.id }]) }
-        else { emitText("✅ 已结束 \(list.count) 个会话，光标已隐藏") }
+        else {
+            // 会话全清后不留 daemon：隐藏只是视觉，进程还活着就是残留
+            _ = ghostCall(["op": "hide"])
+            if ghostDaemonPid() != nil { _ = ghostCall(["op": "quit"]) }
+            _ = pruneStaleSnapshots()
+            emitText("✅ 已结束 \(list.count) 个会话，光标已隐藏")
+        }
         exit(0)
     }
     guard let id = args.str("id") else { emitError(CUError.badRequest, "需要 --id（或 --all）") }

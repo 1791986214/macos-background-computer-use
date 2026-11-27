@@ -44,6 +44,14 @@ let GHOST_WIN_SIZE: CGFloat = 126
 let GHOST_TIP = CGPoint(x: 24, y: 24)
 /// 空闲多久后自动隐藏（秒）
 let GHOST_IDLE_HIDE: Double = 1.8
+/// 覆盖层隐藏后，daemon 再多活这么久就自行退出（避免任务结束后残留进程）。
+/// 以前没有这一条：光标就算隐藏了，进程也永远挂着。
+let GHOST_EXIT_AFTER: Double = {
+    if let raw = ProcessInfo.processInfo.environment["WBCU_GHOST_EXIT_AFTER"], let v = Double(raw) {
+        return max(1, v)
+    }
+    return 60
+}()
 
 enum CursorPhase: String {
     case idle, moving, pressing, ok, fail
@@ -108,8 +116,16 @@ final class CursorModel {
             feedbackAt = nil; feedbackKind = nil
             if phase == .ok || phase == .fail { phase = .idle }
         }
-        // 空闲自动隐藏：动作结束后光标不该长期挂在屏幕上
-        if phase == .idle, feedbackAt == nil,
+        // 关键修复：press() 之后若始终没等到 feedback，相位会永远停在 .pressing，
+        // 而下面的空闲隐藏要求 phase == .idle —— 两个条件互锁，光标就永久挂在屏幕上。
+        if phase == .pressing, feedbackAt == nil,
+           Date().timeIntervalSince(lastTouchAt) > 1.5 {
+            phase = .idle
+        }
+        // 空闲自动隐藏：动作结束后光标不该长期挂在屏幕上。
+        // 不再要求 phase == .idle（.ok/.fail 由上面的 feedbackAt 兜底），
+        // 只要没有正在播放的反馈动画就允许隐藏。
+        if feedbackAt == nil, moveStartedAt == nil,
            Date().timeIntervalSince(lastTouchAt) > GHOST_IDLE_HIDE {
             hide()
         }
@@ -526,6 +542,18 @@ func runGhostDaemon() {
     let server = GhostServer(controller: controller)
     controller.setup()
     server.start()
+
+    // 空闲自退：daemon 是常驻的，但「任务结束后永久驻场」不是常驻，是赖着不走。
+    // 隐藏超过 GHOST_EXIT_AFTER 秒且无任何操作 → 清掉 socket 与 pid 文件后退出。
+    let watchdog = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+        let model = controller.model
+        guard !model.visible,
+              Date().timeIntervalSince(model.lastTouchAt) > GHOST_EXIT_AFTER else { return }
+        unlink(ghostPidPath().cString(using: .utf8)!)
+        try? FileManager.default.removeItem(atPath: GHOST_SOCK_PATH)
+        exit(0)
+    }
+    RunLoop.main.add(watchdog, forMode: .common)
 
     // 用 CFRunLoopRun() 而不是 app.run()：
     // app.run() 会走 NSApplication 的启动完成流程，其中包含「把自己变成活动应用」，

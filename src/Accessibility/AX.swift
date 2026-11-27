@@ -123,6 +123,21 @@ func snapshotFile(_ pid: pid_t) -> URL {
     stateDir().appendingPathComponent("snap-\(pid).json")
 }
 
+/// 清理已退出进程留下的快照缓存（snap-<pid>.json）。
+/// 以前只写不删：实测一台机器跑几周能堆到几十个文件，全是死进程的墓碑。
+@discardableResult
+func pruneStaleSnapshots() -> Int {
+    let fm = FileManager.default
+    guard let files = try? fm.contentsOfDirectory(atPath: stateDir().path) else { return 0 }
+    var removed = 0
+    for name in files where name.hasPrefix("snap-") && name.hasSuffix(".json") {
+        let mid = name.dropFirst(5).dropLast(5)
+        guard let pid = pid_t(mid), kill(pid, 0) != 0 else { continue }   // 进程还活着就留着
+        if (try? fm.removeItem(atPath: stateDir().appendingPathComponent(name).path)) != nil { removed += 1 }
+    }
+    return removed
+}
+
 func saveSnapshot(_ snap: AXSnapshot) {
     let arr: [[String: Any]] = snap.items.map { it in
         ["index": it.index, "path": it.path, "role": it.role, "title": it.title]

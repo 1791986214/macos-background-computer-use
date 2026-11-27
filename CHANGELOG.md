@@ -5,6 +5,32 @@
 
 ## [Unreleased]
 
+### 修复：Ghost Cursor 任务结束后永久驻留（2026-11-27）
+
+用户实测现象：任务结束后紫色假光标（label `targeted`）一直挂在屏幕上。
+
+根因是两处逻辑互锁，加上一处缺失的退出条件：
+
+1. `press()` 把相位设为 `.pressing` 后**没有任何超时复位**；只有 `.ok/.fail` 会在 feedback 超时后回到 `.idle`。
+2. 空闲隐藏的条件是 `phase == .idle` —— 于是 `.pressing` 永远等不到隐藏。
+3. daemon 只隐藏窗口、**从不退出**，进程与 socket 永久残留。
+
+修复：
+
+- `pressing` 超过 1.5s 且无 feedback → 回落 `.idle`
+- 空闲隐藏不再要求 `.idle`（改由 `feedbackAt` / `moveStartedAt` 判占用）
+- daemon 隐藏超过 `GHOST_EXIT_AFTER`（默认 60s，`WBCU_GHOST_EXIT_AFTER` 可覆盖）→ 清 socket/pid 后退出
+- `session end --all` 在最后一个会话结束时直接 `quit` daemon，不再只做视觉隐藏
+
+实测（本机）：`ghost click` 后相位 `pressing` → 3.5s 后 `idle` 且隐藏 → 6s 阈值后
+`daemon 已退出`、`pid 文件已清`。
+
+### 修复：AX 快照缓存只写不删
+
+`~/.wbcu/snap-<pid>.json` 是每进程快照缓存，此前从不回收；本机实测堆到 41 个（死进程墓碑）。
+新增 `pruneStaleSnapshots()`：`kill(pid,0)` 判定进程已死则删除，在 `session end --all` / `gc` 时执行。
+清理后 41 → 3（保留的 3 个属于存活进程），目录 588K → 188K。
+
 ## [0.6.6] — 2026-11-24
 
 修复 Worker 并恢复为默认执行后端。**保留 v0.6.3 的 WGC 成果，不重写捕获模块。**

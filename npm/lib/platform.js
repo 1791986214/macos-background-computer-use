@@ -11,19 +11,19 @@ const path = require('path');
  * sha256 是发布资产的校验值：下载后必须一致，避免半包、代理改写、
  * CDN 脏缓存被当成正常二进制装进系统。资产更新时必须同步这里。
  */
-const RELEASE_TAG = 'v0.6.5-rc1';
+const RELEASE_TAG = 'v0.6.6-rc1';
 const RELEASE_BASE = `https://github.com/1791986214/macos-background-computer-use/releases/download/${RELEASE_TAG}`;
 
 const ASSETS = {
     'win32-x64': {
-        file: 'wbcu-windows-win-x64-0.6.5.zip',
-        sha256: '08aa5eecb2c61673565658f6b9e82873ab09f8c1a6d07d31813bc40fdd8b536b',
+        file: 'wbcu-windows-win-x64-0.6.6.zip',
+        sha256: '508f9f2d4ba6cd767cd1d93ecd499dd30be9222ffb649f2f0a6cc9f7722d7acd',
         engine: 'wbcu.exe',
         extractRoot: '',
     },
     'darwin-arm64': {
-        file: 'wbcu-macos-arm64-0.6.5.zip',
-        sha256: 'ce2e034f92cef9ab29b0d7759948d5fd132a74f674af60a9f447da6401fe1355',
+        file: 'wbcu-macos-arm64-0.6.6.zip',
+        sha256: 'bff23a398471b62ee60570ad232c5bf08b0ffb725474b70aae5e1e1cc4cdb720',
         engine: 'wbcu',
         extractRoot: '',
         // macOS 的幽灵光标覆盖层必须落在 ~/.local/share/wbcu/ThirdHandOverlay.app，

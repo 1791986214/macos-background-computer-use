@@ -6,7 +6,7 @@
 
 WorkBuddy 的第三只手 —— 持续感知、精准操作、后台执行、经验学习。
 
-<sub>macOS v0.6.5 · Windows v0.6.5　│　Native desktop automation for agents</sub>
+<sub>macOS v0.6.6 · Windows v0.6.6　│　Native desktop automation for agents</sub>
 
 </div>
 
@@ -110,23 +110,23 @@ macOS 侧不拆分轻量客户端与常驻进程：引擎随命令启动，覆�
 
 | 项目 | 版本 | 说明 |
 |---|---|---|
-| 可下载的预发布包 | `v0.6.5-rc1`（引擎 0.6.5） | 下面的 npm / PowerShell 命令装的就是它 |
-| npm 安装包 | `workbuddy-third-hand@0.6.5` | 与引擎同版本，不再错位 |
-| 源码 / 真机验收版本 | `v0.6.5` | 就是这个包：含 `wbcuf`、帧身份、Worker opt-in |
+| 可下载的预发布包 | `v0.6.6-rc1`（引擎 0.6.5） | 下面的 npm / PowerShell 命令装的就是它 |
+| npm 安装包 | `workbuddy-third-hand@0.6.6` | 与引擎同版本，不再错位 |
+| 源码 / 真机验收版本 | `v0.6.6` | 就是这个包：含 `wbcuf`、帧身份、Worker opt-in |
 
 `wbcu version` 显示引擎版本，与 npm 包版本不必然相同 —— 这两个号不用对齐。
 
 **npm（Windows / macOS，需 Node 18+）**
 
 ```bash
-npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/workbuddy-third-hand-0.6.5.tgz
+npm i -g https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.6-rc1/workbuddy-third-hand-0.6.6.tgz
 wbcu doctor
 ```
 
 **PowerShell（Windows，未装 Node）**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.5-rc1/install-windows.ps1 | iex"
+powershell -ExecutionPolicy Bypass -Command "irm https://github.com/1791986214/macos-background-computer-use/releases/download/v0.6.6-rc1/install-windows.ps1 | iex"
 ```
 
 **macOS 源码安装**
